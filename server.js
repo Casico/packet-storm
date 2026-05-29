@@ -468,6 +468,22 @@ function restartGame(io, code) {
     player.traversing = null;
   }
 
+  // Reshuffle roles so each player gets a fresh draw, still honoring the scaling table
+  const shuffledPlayers = shuffled([...room.players.values()]);
+  const targets = ROLE_TARGETS[shuffledPlayers.length] || ROLE_TARGETS[10];
+  const slots = [];
+  for (let i = 0; i < ROLES.length; i++) {
+    for (let k = 0; k < targets[i]; k++) slots.push(ROLES[i]);
+  }
+  // Overflow beyond 10 cycles through field roles
+  const overflowRoles = ['NetEng', 'SecOps', 'SysAdmin'];
+  while (slots.length < shuffledPlayers.length) {
+    slots.push(overflowRoles[(slots.length - 10) % overflowRoles.length]);
+  }
+  for (let i = 0; i < shuffledPlayers.length; i++) {
+    shuffledPlayers[i].role = slots[i];
+  }
+
   io.to(code).emit('game-restarted');
   emitState(io, code);
 }
