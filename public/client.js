@@ -166,32 +166,39 @@ const ROLE_ABBR = {
 const ROLE_INFO = {
   NetEng: {
     icon: '🔧',
+    short: 'Configures links, VLANs, routes. Build & upgrade edges with B.',
     body: `<p>Configure VLANs, routes, interfaces. Build & upgrade <strong>links</strong>.</p>
            <p>Hit: BGP flaps, STP storms, MTU mismatches.</p>
            <p>Press <span class="key">B</span> then click a node to build/upgrade a link (1 BW).</p>`,
   },
   SecOps: {
     icon: '🛡️',
+    short: 'Firewall rules, ACLs, block threats.',
     body: `<p>Firewall rules, ACLs, IP blocks, VLAN quarantine.</p>
            <p>Hit: port scans, DDoS, ransomware, brute force, MAC floods.</p>`,
   },
   SysAdmin: {
     icon: '💻',
+    short: 'Patches hosts, restarts services, rotates creds.',
     body: `<p>Patch CVEs, restart services, rotate creds, apt upgrades.</p>
            <p>Hit: zero-days, disk-full, OOMs, service crashes.</p>`,
   },
   NOC: {
     icon: '📟',
+    short: 'Tickets, packet captures, triages anything. Always 1.',
     body: `<p>Open/ack tickets, run packet captures, page on-call.</p>
            <p>Hit: cryptic alerts, Sev-1 pages, customer complaints.</p>
            <p>One per room — you're solo. Triage everything.</p>`,
   },
   DevOps: {
     icon: '🐳',
+    short: 'Deploys, CI runners, K8s, rollbacks. Joins at 5+ players.',
     body: `<p>Deploys, CI runners, K8s, containers, rollbacks.</p>
            <p>Hit: bad deploys, OOM crashloops, stuck pipelines.</p>`,
   },
 };
+
+const MIN_PLAYERS_RECOMMENDED = 4;
 
 const DEFCON_COLORS = { 5: '#7ee787', 4: '#ffd960', 3: '#ff9c3f', 2: '#ff6b6b', 1: '#ff3b3b' };
 
@@ -549,6 +556,43 @@ function updateLobbyCard() {
   }
   lobbyCardEl.classList.add('show');
   lobbyRoomCodeEl.textContent = roomCode || '';
+
+  // Role cards
+  const roleCardsEl = document.getElementById('lobby-role-cards');
+  if (roleCardsEl) {
+    roleCardsEl.innerHTML = '';
+    for (const role of ROLES_DISPLAY_ORDER) {
+      const info = ROLE_INFO[role];
+      if (!info) continue;
+      const card = document.createElement('div');
+      card.className = 'lobby-role-card';
+      card.style.borderLeftColor = ROLE_COLORS[role];
+      const name = document.createElement('div');
+      name.className = 'lrc-name';
+      name.style.color = ROLE_COLORS[role];
+      name.innerHTML = `<span class="lrc-icon">${info.icon}</span> ${role.toUpperCase()}`;
+      const desc = document.createElement('div');
+      desc.className = 'lrc-desc';
+      desc.textContent = info.short || '';
+      card.appendChild(name);
+      card.appendChild(desc);
+      roleCardsEl.appendChild(card);
+    }
+  }
+
+  // Min-player indicator
+  const minEl = document.getElementById('lobby-min-players');
+  if (minEl) {
+    const n = state.players.length;
+    if (n < MIN_PLAYERS_RECOMMENDED) {
+      minEl.className = 'warn';
+      const need = MIN_PLAYERS_RECOMMENDED - n;
+      minEl.textContent = `${n} player${n === 1 ? '' : 's'} so far — ${MIN_PLAYERS_RECOMMENDED} recommended. Need ${need} more for full role variety (host can still start anyway).`;
+    } else {
+      minEl.className = 'ok';
+      minEl.textContent = `${n} players ready — go!`;
+    }
+  }
 
   // Roster grouped by role
   const groups = { NetEng: [], SecOps: [], SysAdmin: [], NOC: [] };

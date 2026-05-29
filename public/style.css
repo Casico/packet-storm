@@ -697,12 +697,61 @@ html, body {
   font-size: 0.88rem;
   line-height: 1.45;
 }
-.lobby-howto-title {
+.lobby-howto-title,
+.lobby-section-title {
   font-size: 0.72rem;
   letter-spacing: 0.2em;
   opacity: 0.55;
   font-weight: 700;
   margin-bottom: 8px;
+}
+
+/* Roles overview cards */
+.lobby-roles-info {
+  text-align: left;
+  background: #0e1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 0 0 12px;
+}
+#lobby-role-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lobby-role-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #161b22;
+  border-left: 3px solid #30363d;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+.lrc-icon { font-size: 1.05rem; }
+.lrc-name { font-weight: 800; letter-spacing: 0.08em; min-width: 78px; }
+.lrc-desc { opacity: 0.75; font-size: 0.78rem; line-height: 1.3; }
+
+/* Min-player indicator */
+#lobby-min-players {
+  text-align: center;
+  font-size: 0.88rem;
+  margin: 0 0 14px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+#lobby-min-players.warn {
+  background: #2d2417;
+  border: 1px solid #ff9c3f;
+  color: #ff9c3f;
+}
+#lobby-min-players.ok {
+  background: #0f1f15;
+  border: 1px solid #7ee787;
+  color: #7ee787;
 }
 .lobby-howto ul {
   list-style: none;

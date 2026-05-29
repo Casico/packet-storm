@@ -19,7 +19,7 @@
       <button id="join-btn">Join</button>
     </div>
     <p id="lobby-msg"></p>
-    <p class="footnote">v0.20 prototype — SFX (dings/sirens) + mobile action buttons.</p>
+    <p class="footnote">v0.21 prototype — lobby role cards + min-player indicator.</p>
   </div>
 
   <div id="game" class="hidden">
@@ -80,8 +80,15 @@
         <p class="lobby-hint">Share the link so your team can join. Move your token around to get oriented.</p>
         <button id="copy-link-btn">📋 Copy invite link</button>
 
+        <div class="lobby-roles-info">
+          <div class="lobby-section-title">ROLES</div>
+          <div id="lobby-role-cards"></div>
+        </div>
+
+        <div id="lobby-min-players"></div>
+
         <div class="lobby-howto">
-          <div class="lobby-howto-title">HOW TO PLAY</div>
+          <div class="lobby-section-title">HOW TO PLAY</div>
           <ul>
             <li><strong>Goal:</strong> survive 8 minutes. Don't let the purple-bordered node (the critical asset) fall, and don't let 7 threats expire.</li>
             <li><strong>Move:</strong> click any connected node.</li>
