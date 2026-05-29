@@ -17,6 +17,9 @@ const rolePanelEl = document.getElementById('role-panel');
 const rolePanelIconEl = document.getElementById('role-panel-icon');
 const rolePanelNameEl = document.getElementById('role-panel-name');
 const rolePanelBodyEl = document.getElementById('role-panel-body');
+const defconBadgeEl = document.getElementById('defcon-badge');
+const taskCountsEl = document.getElementById('task-counts');
+const freezeBannerEl = document.getElementById('freeze-banner');
 const taskPanelEl = document.getElementById('task-panel');
 const taskRoleEl = document.getElementById('task-role');
 const taskVerbEl = document.getElementById('task-verb');
@@ -37,15 +40,16 @@ const copyLinkBtn = document.getElementById('copy-link-btn');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-const ROLES_DISPLAY_ORDER = ['NetEng', 'SecOps', 'SysAdmin', 'NOC'];
+const ROLES_DISPLAY_ORDER = ['NetEng', 'SecOps', 'SysAdmin', 'NOC', 'DevOps'];
 const ROLE_COLORS = {
   NetEng:   '#58a6ff',
   SecOps:   '#ff6b6b',
   SysAdmin: '#7ee787',
   NOC:      '#ffd960',
+  DevOps:   '#48dbfb',
 };
 const ROLE_ABBR = {
-  NetEng: 'NET', SecOps: 'SEC', SysAdmin: 'SYS', NOC: 'NOC',
+  NetEng: 'NET', SecOps: 'SEC', SysAdmin: 'SYS', NOC: 'NOC', DevOps: 'DEV',
 };
 
 const ROLE_INFO = {
@@ -58,20 +62,27 @@ const ROLE_INFO = {
   SecOps: {
     icon: '🛡️',
     body: `<p>Firewall rules, ACLs, IP blocks, VLAN quarantine.</p>
-           <p>Hit: port scans, ransomware, brute force, MAC floods.</p>`,
+           <p>Hit: port scans, DDoS, ransomware, brute force, MAC floods.</p>`,
   },
   SysAdmin: {
     icon: '💻',
     body: `<p>Patch CVEs, restart services, rotate creds, apt upgrades.</p>
-           <p>Hit: zero-days, disk-full, service crashes on hosts.</p>`,
+           <p>Hit: zero-days, disk-full, OOMs, service crashes.</p>`,
   },
   NOC: {
     icon: '📟',
     body: `<p>Open/ack tickets, run packet captures, page on-call.</p>
-           <p>Hit: cryptic alerts anywhere on the map.</p>
+           <p>Hit: cryptic alerts, Sev-1 pages, customer complaints.</p>
            <p>One per room — you're solo. Triage everything.</p>`,
   },
+  DevOps: {
+    icon: '🐳',
+    body: `<p>Deploys, CI runners, K8s, containers, rollbacks.</p>
+           <p>Hit: bad deploys, OOM crashloops, stuck pipelines.</p>`,
+  },
 };
+
+const DEFCON_COLORS = { 5: '#7ee787', 4: '#ffd960', 3: '#ff9c3f', 2: '#ff6b6b', 1: '#ff3b3b' };
 
 const NODE_TYPE_ICON = {
   external: '🌐',
@@ -220,6 +231,22 @@ socket.on('threat-expired', ({ name, nodeLabel }) => {
   showToast(`⚠ ${name.toUpperCase()} on ${nodeLabel} EXPIRED`, 'warn');
 });
 
+socket.on('distraction-start', ({ playerId, playerName, verb, durationMs }) => {
+  if (playerId === myId) {
+    showToast(`📞 ${verb} — frozen ${Math.round(durationMs/1000)}s. Hold F to bail (+1 alert).`, 'warn');
+  } else {
+    showToast(`📞 ${playerName} pulled into: ${verb}`, 'warn');
+  }
+});
+
+socket.on('distraction-end', ({ playerId, playerName, bailed }) => {
+  if (playerId === myId) {
+    showToast(bailed ? `✊ You bailed (+1 alert)` : `✓ You're free`, bailed ? 'warn' : 'success');
+  } else if (bailed) {
+    showToast(`✊ ${playerName} bailed (+1 alert)`, 'warn');
+  }
+});
+
 socket.on('node-spawned', ({ label }) => {
   showToast(`🌱 NEW NODE: ${label} — connect within 45s`, 'warn');
 });
@@ -310,6 +337,30 @@ function updateHud() {
   playerCount.textContent = `${state.players.length}p`;
 
   const inLobby = state.gameState === 'lobby';
+
+  // DEFCON badge — only show in 'playing'
+  if (!inLobby && state.defcon) {
+    defconBadgeEl.textContent = `DEFCON ${state.defcon}`;
+    defconBadgeEl.style.color = DEFCON_COLORS[state.defcon] || '#fff';
+    defconBadgeEl.style.borderColor = DEFCON_COLORS[state.defcon] || '#30363d';
+    defconBadgeEl.className = state.defcon <= 1 ? 'critical' : '';
+  } else {
+    defconBadgeEl.textContent = '';
+    defconBadgeEl.className = '';
+  }
+
+  // Task counts per role (only during play)
+  if (!inLobby && state.taskCounts) {
+    const parts = [];
+    for (const role of ROLES_DISPLAY_ORDER) {
+      const cnt = state.taskCounts[role] || 0;
+      const color = ROLE_COLORS[role];
+      parts.push(`<span style="color:${color}">${ROLE_ABBR[role]}:${cnt}</span>`);
+    }
+    taskCountsEl.innerHTML = parts.join(' · ');
+  } else {
+    taskCountsEl.innerHTML = '';
+  }
 
   // Alert queue (hidden in lobby)
   if (inLobby) {
@@ -504,6 +555,10 @@ function neighborsOf(id) {
     .filter(([a, b]) => a === id || b === id).map(([a, b]) => (a === id ? b : a));
 }
 
+const BAIL_HOLD_MS = 2000;
+let bailHoldTimer = null;
+let bailHoldStartedAt = 0;
+
 window.addEventListener('keydown', (e) => {
   if (!state || !myId) return;
   if (e.key === ' ' || e.code === 'Space') {
@@ -519,6 +574,26 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (buildMode) { e.preventDefault(); exitBuildMode(); }
     return;
+  }
+  if ((e.key === 'f' || e.key === 'F') && !e.repeat) {
+    const me = state.players.find((p) => p.id === myId);
+    if (me && me.frozenUntil && !bailHoldTimer) {
+      e.preventDefault();
+      bailHoldStartedAt = performance.now();
+      bailHoldTimer = setTimeout(() => {
+        socket.emit('distraction-bail');
+        bailHoldTimer = null;
+        bailHoldStartedAt = 0;
+      }, BAIL_HOLD_MS);
+    }
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  if ((e.key === 'f' || e.key === 'F') && bailHoldTimer) {
+    clearTimeout(bailHoldTimer);
+    bailHoldTimer = null;
+    bailHoldStartedAt = 0;
   }
 });
 
@@ -899,6 +974,9 @@ function render() {
     const py = rs.y;
 
     const isMe = p.id === myId;
+    const isFrozen = !!p.frozenUntil;
+    const alpha = isFrozen ? 0.4 : 1.0;
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = p.color;
     ctx.strokeStyle = ROLE_COLORS[p.role] || '#e6edf3';
     ctx.lineWidth = isMe ? 4 : 2;
@@ -918,5 +996,38 @@ function render() {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(p.name, px, py - PLAYER_RADIUS - 6);
+    ctx.globalAlpha = 1.0;
+
+    // Frozen overlay: 📞 above the token
+    if (isFrozen) {
+      ctx.font = '18px -apple-system, "Apple Color Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('📞', px + PLAYER_RADIUS + 4, py - PLAYER_RADIUS - 4);
+    }
   }
+
+  // Freeze banner DOM update (refreshed each frame so countdown ticks smoothly)
+  if (myId) {
+    const me = state.players.find((p) => p.id === myId);
+    if (me && me.frozenUntil) {
+      const remain = Math.max(0, me.frozenUntil - Date.now());
+      const secs = Math.ceil(remain / 1000);
+      const holdElapsed = bailHoldStartedAt ? performance.now() - bailHoldStartedAt : 0;
+      const holdPct = Math.min(100, (holdElapsed / BAIL_HOLD_MS) * 100);
+      freezeBannerEl.innerHTML =
+        `<div class="freeze-line">📞 <strong>${escapeHtmlSimple(me.frozenVerb || 'In a meeting')}</strong> — ${secs}s left</div>` +
+        `<div class="freeze-bail">Hold <span class="key">F</span> for 2s to bail (+1 alert)` +
+        (holdElapsed > 0 ? `<div class="bail-bar"><div class="bail-bar-fill" style="width:${holdPct}%"></div></div>` : '') +
+        `</div>`;
+      freezeBannerEl.className = 'show';
+    } else {
+      freezeBannerEl.className = '';
+      freezeBannerEl.innerHTML = '';
+    }
+  }
+}
+
+function escapeHtmlSimple(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 }

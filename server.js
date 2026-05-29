@@ -6,15 +6,20 @@ const { Server } = require('socket.io');
 // ---- Constants ----
 const TRAVERSAL_MS = 1500;
 
-const TASK_FIRE_MS = 10000;
 const TASK_WARMUP_MS = 5000;
-const BANDWIDTH_PER_TASK = 1;
-
-const THREAT_FIRE_MS = 22000;
 const THREAT_WARMUP_MS = 15000;
+const BANDWIDTH_PER_TASK = 1;
 const BANDWIDTH_PER_THREAT = 2;
 const BANDWIDTH_PER_MULTI_THREAT = 4;
-const MULTI_THREAT_UNLOCK_MS = 3 * 60 * 1000; // multi-role threats only after 3 minutes in
+
+// DEFCON-driven cadences (5 = chill, 1 = chickens). Levels shift every DEFCON_TICK_MS.
+const DEFCON_TICK_MS = 90 * 1000;        // 90s per tier
+const MULTI_THREAT_UNLOCK_DEFCON = 3;    // multi-role threats start firing at DEFCON 3
+const TASK_FIRE_MS_BY_DEFCON     = { 5: 14000, 4: 11000, 3: 9000,  2: 7000,  1: 5000 };
+const THREAT_FIRE_MS_BY_DEFCON   = { 5: 30000, 4: 25000, 3: 22000, 2: 18000, 1: 15000 };
+const DISTRACT_FIRE_MS_BY_DEFCON = { 5: Infinity, 4: 90000, 3: 60000, 2: 45000, 1: 35000 };
+
+const DISTRACTION_BAIL_PENALTY = 1; // +alertQueue when bailing
 
 const SPAWN_INTERVAL_MS = 60000;
 const SHADOW_TIMEOUT_MS = 45000;
@@ -33,22 +38,29 @@ const COLORS = [
 ];
 
 // ---- Roles ----
-const ROLES = ['NetEng', 'SecOps', 'SysAdmin', 'NOC'];
+const ROLES = ['NetEng', 'SecOps', 'SysAdmin', 'NOC', 'DevOps'];
 const ROLE_TARGETS = {
-  1: [1,0,0,0], 2: [1,1,0,0], 3: [1,1,1,0], 4: [1,1,1,1],
-  5: [2,1,1,1], 6: [2,2,1,1], 7: [2,2,2,1],
-  8: [3,2,2,1], 9: [3,3,2,1], 10: [3,3,3,1],
+  1: [1,0,0,0,0],
+  2: [1,1,0,0,0],
+  3: [1,1,1,0,0],
+  4: [1,1,1,1,0],
+  5: [1,1,1,1,1],
+  6: [2,1,1,1,1],
+  7: [2,2,1,1,1],
+  8: [2,2,2,1,1],
+  9: [3,2,2,1,1],
+  10: [3,2,2,2,1],
 };
 
 function pickRoleForJoin(room) {
-  const counts = { NetEng: 0, SecOps: 0, SysAdmin: 0, NOC: 0 };
+  const counts = { NetEng: 0, SecOps: 0, SysAdmin: 0, NOC: 0, DevOps: 0 };
   for (const p of room.players.values()) counts[p.role]++;
   const newTotal = room.players.size + 1;
   const targets = ROLE_TARGETS[newTotal] || ROLE_TARGETS[10];
   for (let i = 0; i < ROLES.length; i++) {
     if (counts[ROLES[i]] < targets[i]) return ROLES[i];
   }
-  const overflow = ['NetEng', 'SecOps', 'SysAdmin'];
+  const overflow = ['NetEng', 'SecOps', 'SysAdmin', 'DevOps'];
   return overflow[(room.players.size - 10) % overflow.length];
 }
 
@@ -74,12 +86,24 @@ function generateTopology() {
   const edges = [];
   const xOf = (id) => nodes.find((n) => n.id === id).x;
 
-  // Internet (always 1)
+  // Internet (always 1, top center)
   nodes.push({ id: 'internet', label: 'Internet', x: 0.50, y: 0.08, type: 'external' });
 
-  // Firewall (always 1)
-  nodes.push({ id: 'fw', label: choice(FW_NAMES), x: 0.50, y: 0.22, type: 'firewall' });
-  edges.push(['internet', 'fw', 1]);
+  // Firewalls — 1 or 2. 1 → center; 2 → left + right edges so SecOps actually travels.
+  const numFw = Math.random() < 0.55 ? 2 : 1;
+  const fwNames = shuffled(FW_NAMES).slice(0, numFw);
+  const fwIds = [];
+  if (numFw === 1) {
+    nodes.push({ id: 'fw-1', label: fwNames[0], x: 0.50, y: 0.22, type: 'firewall' });
+    edges.push(['internet', 'fw-1', 1]);
+    fwIds.push('fw-1');
+  } else {
+    nodes.push({ id: 'fw-1', label: fwNames[0], x: 0.08, y: 0.30, type: 'firewall' });
+    nodes.push({ id: 'fw-2', label: fwNames[1], x: 0.92, y: 0.30, type: 'firewall' });
+    edges.push(['internet', 'fw-1', 1]);
+    edges.push(['internet', 'fw-2', 1]);
+    fwIds.push('fw-1', 'fw-2');
+  }
 
   // Cores (1 or 2)
   const numCores = randInt(1, 2);
@@ -87,9 +111,10 @@ function generateTopology() {
   const coreIds = [];
   for (let i = 0; i < numCores; i++) {
     const id = `core-${i + 1}`;
-    const x = numCores === 1 ? 0.50 : (i === 0 ? 0.32 : 0.68);
-    nodes.push({ id, label: coreNames[i], x, y: 0.42, type: 'switch' });
-    edges.push(['fw', id, 1]);
+    const x = numCores === 1 ? 0.50 : (i === 0 ? 0.34 : 0.66);
+    nodes.push({ id, label: coreNames[i], x, y: 0.48, type: 'switch' });
+    // Each core connects to every firewall (so traffic from either edge can route)
+    for (const fwId of fwIds) edges.push([fwId, id, 1]);
     coreIds.push(id);
   }
 
@@ -198,6 +223,14 @@ const TASK_TEMPLATES = [
   { role: 'NOC',      nodeTypes: ['firewall','switch','host'],     verb: () => `Acknowledge alert ALT-${randInt(100,999)}` },
   { role: 'NOC',      nodeTypes: ['switch','firewall'],            verb: () => `Run packet capture for 10s` },
   { role: 'NOC',      nodeTypes: ['host'],                         verb: () => `Page on-call (Sev-${randInt(1,3)})` },
+
+  // DevOps
+  { role: 'DevOps',   nodeTypes: ['host'],                         verb: () => `Push deploy v${randInt(1,9)}.${randInt(0,20)}.${randInt(0,30)}` },
+  { role: 'DevOps',   nodeTypes: ['host'],                         verb: () => `Restart CI runner ${randInt(1,12)}` },
+  { role: 'DevOps',   nodeTypes: ['host'],                         verb: () => `Roll back to release-${randInt(2024,2026)}-Q${randInt(1,4)}` },
+  { role: 'DevOps',   nodeTypes: ['host'],                         verb: () => `Scale replicas to ${randInt(2,8)}` },
+  { role: 'DevOps',   nodeTypes: ['host'],                         verb: () => `kubectl drain node-${randInt(1,6)}` },
+  { role: 'DevOps',   nodeTypes: ['host'],                         verb: () => `Bump container image to alpine:${randInt(3,4)}.${randInt(15,21)}` },
 ];
 
 // ---- Threat templates ----
@@ -236,12 +269,37 @@ const THREAT_TEMPLATES = [
   { roles: ['NOC'],      nodeTypes: ['host'],                     durationMs: 50000, name: () => `Customer complaint ticket` },
   { roles: ['NOC'],      nodeTypes: ['firewall','switch','host'], durationMs: 55000, name: () => `Compliance audit due` },
 
+  // DevOps
+  { roles: ['DevOps'],   nodeTypes: ['host'],                     durationMs: 40000, name: () => `Deploy gone bad — rollback` },
+  { roles: ['DevOps'],   nodeTypes: ['host'],                     durationMs: 45000, name: () => `CI pipeline stuck` },
+  { roles: ['DevOps'],   nodeTypes: ['host'],                     durationMs: 35000, name: () => `Container OOM crashloop` },
+  { roles: ['DevOps'],   nodeTypes: ['host'],                     durationMs: 50000, name: () => `K8s API server flapping` },
+  { roles: ['DevOps'],   nodeTypes: ['host'],                     durationMs: 40000, name: () => `Helm release wedged` },
+
   // ---- Multi-role threats (require multiple roles at the same node) ----
   { roles: ['SecOps', 'SysAdmin'], nodeTypes: ['host'],     durationMs: 60000, multi: true, name: () => `Ransomware breach — quarantine + patch` },
   { roles: ['NetEng', 'SecOps'],   nodeTypes: ['firewall'], durationMs: 60000, multi: true, name: () => `Firewall compromised — reconfig + reset` },
   { roles: ['SysAdmin', 'NOC'],    nodeTypes: ['host'],     durationMs: 60000, multi: true, name: () => `Prod DB failure — restore + ack` },
   { roles: ['NetEng', 'NOC'],      nodeTypes: ['switch'],   durationMs: 60000, multi: true, name: () => `Network partition — reroute + declare` },
   { roles: ['SecOps', 'NOC'],      nodeTypes: ['firewall'], durationMs: 60000, multi: true, name: () => `Insider threat — kill session + investigate` },
+  { roles: ['DevOps', 'SecOps'],   nodeTypes: ['host'],     durationMs: 60000, multi: true, name: () => `Supply chain compromise — block + redeploy` },
+  { roles: ['DevOps', 'SysAdmin'], nodeTypes: ['host'],     durationMs: 60000, multi: true, name: () => `Failed rollback mid-incident — fix + restart` },
+];
+
+// ---- Distraction templates (Manager/Director freezes) ----
+const DISTRACTION_TEMPLATES = [
+  { source: 'Director Smith',    verb: () => 'wants a status update',                  durationMs: 25000 },
+  { source: 'VP of Engineering', verb: () => 'pinged you about budget',                durationMs: 30000 },
+  { source: 'PM Sarah',          verb: () => 'needs you in standup',                   durationMs: 18000 },
+  { source: 'Compliance',        verb: () => 'emailed about the audit',                durationMs: 22000 },
+  { source: 'Your manager',      verb: () => 'wants a quick 1:1',                      durationMs: 28000 },
+  { source: 'CEO',               verb: () => 'sent a Slack DM: "got a minute?"',       durationMs: 35000 },
+  { source: 'CFO',               verb: () => 'wants to discuss Q4 forecast',           durationMs: 32000 },
+  { source: 'HR',                verb: () => 'reminder: training is overdue',          durationMs: 15000 },
+  { source: 'Sales VP',          verb: () => 'wants you on a customer call',           durationMs: 30000 },
+  { source: 'Project Lead',      verb: () => `needs ETA on JIRA-${randInt(1000, 9999)}`, durationMs: 20000 },
+  { source: 'Recruiter',         verb: () => 'wants to chat about a referral',         durationMs: 22000 },
+  { source: 'Office Manager',    verb: () => 'asking about ordering snacks',           durationMs: 12000 },
 ];
 
 // ---- Rooms ----
@@ -272,15 +330,25 @@ function newRoom() {
     spawnSeq: 1,
     gameState: 'lobby',
     hostId: null,
+    gameStartedAt: null,
     roundEndsAt: null,
-    taskInterval: null,
-    threatInterval: null,
+    taskTimeout: null,
+    threatTimeout: null,
+    distractTimeout: null,
     spawnInterval: null,
     roundEndTimeout: null,
     topology: { nodes: gen.nodes, edges: gen.edges },
     criticalNode: gen.criticalNodeId,
-    stats: { tasksCompleted: 0, threatsResolved: 0, threatsExpired: 0, nodesConnected: 0, nodesShadowed: 0 },
+    stats: { tasksCompleted: 0, threatsResolved: 0, threatsExpired: 0, nodesConnected: 0, nodesShadowed: 0, distractionsBailed: 0 },
   };
+}
+
+// ---- DEFCON ----
+function defconLevel(room) {
+  if (!room.gameStartedAt) return 5;
+  const elapsed = Date.now() - room.gameStartedAt;
+  const tier = 5 - Math.floor(elapsed / DEFCON_TICK_MS);
+  return Math.max(1, Math.min(5, tier));
 }
 
 // ---- Task lifecycle ----
@@ -352,9 +420,8 @@ function fireThreat(io, code) {
   if (!room || room.gameState !== 'playing' || room.players.size === 0) return;
   const rolesPresent = new Set(Array.from(room.players.values()).map((p) => p.role));
 
-  // Time gate: multi-role threats only after MULTI_THREAT_UNLOCK_MS elapsed
-  const elapsed = Date.now() - (room.gameStartedAt || Date.now());
-  const multiAllowed = elapsed >= MULTI_THREAT_UNLOCK_MS;
+  // Multi-role threats gated by DEFCON level (default unlocks at MULTI_THREAT_UNLOCK_DEFCON)
+  const multiAllowed = defconLevel(room) <= MULTI_THREAT_UNLOCK_DEFCON;
 
   const executable = THREAT_TEMPLATES.filter((t) => {
     if (t.multi && !multiAllowed) return false;
@@ -507,13 +574,18 @@ function restartGame(io, code) {
   room.spawnSeq = 1;
   room.gameState = 'lobby';
   room.roundEndsAt = null;
-  room.stats = { tasksCompleted: 0, threatsResolved: 0, threatsExpired: 0, nodesConnected: 0, nodesShadowed: 0 };
+  room.stats = { tasksCompleted: 0, threatsResolved: 0, threatsExpired: 0, nodesConnected: 0, nodesShadowed: 0, distractionsBailed: 0 };
+  room.gameStartedAt = null;
 
   // Re-randomize each player onto a node from the new map; old node IDs may not exist
   const startCandidates = room.topology.nodes.filter((n) => !n.isSpawn).map((n) => n.id);
   for (const player of room.players.values()) {
     player.node = startCandidates[Math.floor(Math.random() * startCandidates.length)];
     player.traversing = null;
+    if (player._frozenTimer) clearTimeout(player._frozenTimer);
+    player._frozenTimer = null;
+    player.frozenUntil = null;
+    player.frozenVerb = null;
   }
 
   // Reshuffle roles so each player gets a fresh draw, still honoring the scaling table
@@ -537,6 +609,41 @@ function restartGame(io, code) {
 }
 
 // ---- Game state ----
+function scheduleNextTask(io, code) {
+  const room = rooms.get(code);
+  if (!room || room.gameState !== 'playing') return;
+  const delay = TASK_FIRE_MS_BY_DEFCON[defconLevel(room)] || 10000;
+  room.taskTimeout = setTimeout(() => {
+    fireTask(io, code);
+    scheduleNextTask(io, code);
+  }, delay);
+}
+function scheduleNextThreat(io, code) {
+  const room = rooms.get(code);
+  if (!room || room.gameState !== 'playing') return;
+  const delay = THREAT_FIRE_MS_BY_DEFCON[defconLevel(room)] || 22000;
+  // Bursty: 15% chance of a half-delay (a second alert lands quickly)
+  const burst = Math.random() < 0.15 ? 0.5 : 1;
+  room.threatTimeout = setTimeout(() => {
+    fireThreat(io, code);
+    scheduleNextThreat(io, code);
+  }, delay * burst);
+}
+function scheduleNextDistraction(io, code) {
+  const room = rooms.get(code);
+  if (!room || room.gameState !== 'playing') return;
+  const delay = DISTRACT_FIRE_MS_BY_DEFCON[defconLevel(room)];
+  if (!isFinite(delay)) {
+    // Retry in 20s — DEFCON might drop into range
+    room.distractTimeout = setTimeout(() => scheduleNextDistraction(io, code), 20000);
+    return;
+  }
+  room.distractTimeout = setTimeout(() => {
+    fireDistraction(io, code);
+    scheduleNextDistraction(io, code);
+  }, delay);
+}
+
 function startGame(io, code) {
   const room = rooms.get(code);
   if (!room) return;
@@ -544,19 +651,10 @@ function startGame(io, code) {
   room.gameStartedAt = Date.now();
   room.roundEndsAt = Date.now() + ROUND_DURATION_MS + THREAT_WARMUP_MS;
 
-  setTimeout(() => {
-    const r = rooms.get(code);
-    if (!r || r.gameState !== 'playing') return;
-    r.taskInterval = setInterval(() => fireTask(io, code), TASK_FIRE_MS);
-  }, TASK_WARMUP_MS);
+  setTimeout(() => scheduleNextTask(io, code), TASK_WARMUP_MS);
+  setTimeout(() => scheduleNextThreat(io, code), THREAT_WARMUP_MS);
+  setTimeout(() => scheduleNextDistraction(io, code), DEFCON_TICK_MS); // first distraction not before DEFCON 4
 
-  setTimeout(() => {
-    const r = rooms.get(code);
-    if (!r || r.gameState !== 'playing') return;
-    r.threatInterval = setInterval(() => fireThreat(io, code), THREAT_FIRE_MS);
-  }, THREAT_WARMUP_MS);
-
-  // New nodes start spawning after first interval too
   startSpawnLoop(io, code);
 
   room.roundEndTimeout = setTimeout(() => gameWin(io, code), ROUND_DURATION_MS + THREAT_WARMUP_MS);
@@ -564,12 +662,45 @@ function startGame(io, code) {
 }
 
 function clearTimers(room) {
-  if (room.taskInterval) { clearInterval(room.taskInterval); room.taskInterval = null; }
-  if (room.threatInterval) { clearInterval(room.threatInterval); room.threatInterval = null; }
+  if (room.taskTimeout) { clearTimeout(room.taskTimeout); room.taskTimeout = null; }
+  if (room.threatTimeout) { clearTimeout(room.threatTimeout); room.threatTimeout = null; }
+  if (room.distractTimeout) { clearTimeout(room.distractTimeout); room.distractTimeout = null; }
   if (room.spawnInterval) { clearInterval(room.spawnInterval); room.spawnInterval = null; }
   if (room.roundEndTimeout) { clearTimeout(room.roundEndTimeout); room.roundEndTimeout = null; }
   for (const t of room.threats.values()) if (t._timer) clearTimeout(t._timer);
   for (const n of room.topology.nodes) if (n._shadowTimer) { clearTimeout(n._shadowTimer); n._shadowTimer = null; }
+  for (const p of room.players.values()) if (p._frozenTimer) { clearTimeout(p._frozenTimer); p._frozenTimer = null; }
+}
+
+// ---- Distraction lifecycle ----
+function fireDistraction(io, code) {
+  const room = rooms.get(code);
+  if (!room || room.gameState !== 'playing' || room.players.size === 0) return;
+  // Cap one freeze at a time
+  if (Array.from(room.players.values()).some((p) => p.frozenUntil)) return;
+  // Pick an eligible (non-traversing) player
+  const eligible = Array.from(room.players.values()).filter((p) => !p.traversing);
+  if (eligible.length === 0) return;
+  const player = choice(eligible);
+  const template = choice(DISTRACTION_TEMPLATES);
+  const verb = `${template.source} ${template.verb()}`;
+  const now = Date.now();
+  player.frozenUntil = now + template.durationMs;
+  player.frozenVerb = verb;
+  console.log(`[${code}] DISTRACTION: ${player.name} frozen by ${template.source} for ${template.durationMs / 1000}s`);
+  io.to(code).emit('distraction-start', {
+    playerId: player.id, playerName: player.name, verb,
+    durationMs: template.durationMs,
+  });
+  player._frozenTimer = setTimeout(() => {
+    if (!player.frozenUntil) return;
+    player.frozenUntil = null;
+    player.frozenVerb = null;
+    player._frozenTimer = null;
+    io.to(code).emit('distraction-end', { playerId: player.id, playerName: player.name, bailed: false });
+    emitState(io, code);
+  }, template.durationMs);
+  emitState(io, code);
 }
 
 function gameOver(io, code, reason) {
@@ -594,6 +725,15 @@ function gameWin(io, code) {
 
 // ---- State emission ----
 function publicSnapshot(room) {
+  // Per-role pending task counts (for HUD display)
+  const taskCounts = { NetEng: 0, SecOps: 0, SysAdmin: 0, NOC: 0, DevOps: 0 };
+  for (const t of room.tasks.values()) {
+    if (taskCounts[t.requiredRole] !== undefined) taskCounts[t.requiredRole]++;
+  }
+  for (const pt of room.pendingTasks) {
+    const r = pt.template.role;
+    if (taskCounts[r] !== undefined) taskCounts[r]++;
+  }
   return {
     topology: {
       nodes: room.topology.nodes.map((n) => ({
@@ -607,6 +747,8 @@ function publicSnapshot(room) {
     gameState: room.gameState,
     hostId: room.hostId,
     roundEndsAt: room.roundEndsAt,
+    defcon: defconLevel(room),
+    taskCounts,
     alertQueue: room.alertQueue,
     alertQueueMax: ALERT_QUEUE_MAX,
     criticalNode: room.criticalNode,
@@ -616,6 +758,8 @@ function publicSnapshot(room) {
     players: Array.from(room.players.values()).map((p) => ({
       id: p.id, name: p.name, color: p.color, role: p.role,
       node: p.node, traversing: p.traversing,
+      frozenUntil: p.frozenUntil || null,
+      frozenVerb: p.frozenVerb || null,
     })),
     traversals: Array.from(room.traversals.entries()).flatMap(([edge, arr]) =>
       arr.map((t) => ({ edge, playerId: t.playerId, startedAt: t.startedAt }))
@@ -771,6 +915,7 @@ io.on('connection', (socket) => {
     if (room.gameState !== 'playing' && room.gameState !== 'lobby') return;
     const player = room.players.get(socket.id);
     if (!player || player.traversing) return;
+    if (player.frozenUntil) return;
     if (!neighborsOf(room.topology, player.node).includes(toNode)) return;
     const key = edgeKey(player.node, toNode);
     const cap = capacityOf(room.topology, player.node, toNode);
@@ -801,6 +946,7 @@ io.on('connection', (socket) => {
     if (!room || room.gameState !== 'playing') return;
     const player = room.players.get(socket.id);
     if (!player || player.traversing) return;
+    if (player.frozenUntil) return;
 
     // Find an incomplete step in any threat that matches this player's role + node
     let matchedThreat = null;
@@ -872,6 +1018,10 @@ io.on('connection', (socket) => {
     }
     if (player.traversing) {
       socket.emit('build-fail', { reason: 'Cannot build while moving' });
+      return;
+    }
+    if (player.frozenUntil) {
+      socket.emit('build-fail', { reason: 'You are in a meeting' });
       return;
     }
     const fromNode = nodeById(room.topology, player.node);
@@ -946,6 +1096,29 @@ io.on('connection', (socket) => {
       from: player.node, to: target.id, label: target.label, byName: player.name,
       upgraded: false, newCapacity: 1,
     });
+    emitState(io, currentRoom);
+  });
+
+  socket.on('distraction-bail', () => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room || room.gameState !== 'playing') return;
+    const player = room.players.get(socket.id);
+    if (!player || !player.frozenUntil) return;
+    if (player._frozenTimer) { clearTimeout(player._frozenTimer); player._frozenTimer = null; }
+    const verb = player.frozenVerb;
+    player.frozenUntil = null;
+    player.frozenVerb = null;
+    room.alertQueue += DISTRACTION_BAIL_PENALTY;
+    room.stats.distractionsBailed++;
+    console.log(`[${currentRoom}] BAIL: ${player.name} bailed (${verb}) — alertQueue=${room.alertQueue}`);
+    io.to(currentRoom).emit('distraction-end', {
+      playerId: socket.id, playerName: player.name, bailed: true,
+    });
+    if (room.alertQueue > ALERT_QUEUE_MAX) {
+      gameOver(io, currentRoom, `Alert queue overflowed (bailed on meeting)`);
+      return;
+    }
     emitState(io, currentRoom);
   });
 

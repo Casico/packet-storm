@@ -19,7 +19,7 @@
       <button id="join-btn">Join</button>
     </div>
     <p id="lobby-msg"></p>
-    <p class="footnote">v0.17 prototype — expanded threats + multi-role late-game threats.</p>
+    <p class="footnote">v0.18 prototype — DEFCON escalation, DevOps role, firewalls on sides, distractions, task counts.</p>
   </div>
 
   <div id="game" class="hidden">
@@ -27,6 +27,10 @@
       <span id="hud-left">
         <img id="hud-logo" src="/assets/logo.png" alt="" />
         <span id="room-label"></span>
+      </span>
+      <span id="hud-center">
+        <span id="defcon-badge"></span>
+        <span id="task-counts"></span>
       </span>
       <span id="hud-right">
         <span id="round-timer"></span>
@@ -58,6 +62,7 @@
 
     <div id="space-prompt"></div>
     <div id="build-prompt"></div>
+    <div id="freeze-banner"></div>
     <div id="toast"></div>
 
     <div id="lobby-card">
@@ -98,7 +103,7 @@
       </div>
     </div>
 
-    <div id="help">Click a connected node to move • SPACE to act on a task/threat • B (NetEng) to enter build mode, then click any target</div>
+    <div id="help">Click a connected node to move • SPACE to act on a task/threat • B (NetEng) to enter build mode, then click any target • F (hold) to bail on a meeting (+1 alert)</div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
