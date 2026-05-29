@@ -20,7 +20,6 @@ const LINK_BUILD_COST = 1;
 
 const ROUND_DURATION_MS = 8 * 60 * 1000;
 const ALERT_QUEUE_MAX = 6;
-const CRITICAL_NODE = 'customer-db';
 
 const STARTING_BANDWIDTH = 3;
 
@@ -49,35 +48,100 @@ function pickRoleForJoin(room) {
   return overflow[(room.players.size - 10) % overflow.length];
 }
 
-// ---- Base topology (per-room copy is mutated) ----
-const BASE_TOPOLOGY = {
-  nodes: [
-    { id: 'internet',     label: 'Internet',     x: 0.50, y: 0.08, type: 'external' },
-    { id: 'fw',           label: 'Firewall',     x: 0.50, y: 0.22, type: 'firewall' },
-    { id: 'core-sw',      label: 'Core-SW',      x: 0.50, y: 0.42, type: 'switch' },
-    { id: 'access-sw-1',  label: 'Access-SW-1',  x: 0.25, y: 0.62, type: 'switch' },
-    { id: 'access-sw-2',  label: 'Access-SW-2',  x: 0.75, y: 0.62, type: 'switch' },
-    { id: 'web-srv',      label: 'Web-SRV',      x: 0.05, y: 0.86, type: 'host' },
-    { id: 'file-srv',     label: 'File-SRV',     x: 0.30, y: 0.86, type: 'host' },
-    { id: 'customer-db',  label: 'Customer-DB',  x: 0.75, y: 0.86, type: 'host' },
-  ],
-  edges: [
-    ['internet', 'fw'],
-    ['fw', 'core-sw'],
-    ['core-sw', 'access-sw-1'],
-    ['core-sw', 'access-sw-2'],
-    ['access-sw-1', 'web-srv'],
-    ['access-sw-1', 'file-srv'],
-    ['access-sw-2', 'customer-db'],
-    ['core-sw', 'customer-db'],
-  ],
-};
+// ---- Random topology generator ----
+// Layered network: Internet → Firewall → Core(s) → Access switches → Hosts (one critical).
+// Each new room gets a fresh map.
+const FW_NAMES     = ['Edge-FW', 'Perimeter-FW', 'Border-FW', 'DMZ-FW'];
+const CORE_NAMES   = ['Core-SW', 'Backbone-SW', 'Spine-1', 'Spine-2', 'Distrib-SW'];
+const HOST_NAMES   = ['Web-SRV', 'File-SRV', 'Mail-SRV', 'DNS-01', 'App-SRV', 'Backup-SRV', 'Wiki', 'GitLab', 'Jira', 'Print-SRV', 'CDN-Node', 'CI-Runner'];
+const CRIT_NAMES   = ['Customer-DB', 'Prod-DB', 'Finance-DB', 'Patient-DB', 'Billing-DB', 'Orders-DB'];
 
-function cloneTopology(t) {
-  return {
-    nodes: t.nodes.map((n) => ({ ...n })),
-    edges: t.edges.map((e) => [...e]),
-  };
+function shuffled(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function generateTopology() {
+  const nodes = [];
+  const edges = [];
+  const xOf = (id) => nodes.find((n) => n.id === id).x;
+
+  // Internet (always 1)
+  nodes.push({ id: 'internet', label: 'Internet', x: 0.50, y: 0.08, type: 'external' });
+
+  // Firewall (always 1)
+  nodes.push({ id: 'fw', label: choice(FW_NAMES), x: 0.50, y: 0.22, type: 'firewall' });
+  edges.push(['internet', 'fw']);
+
+  // Cores (1 or 2)
+  const numCores = randInt(1, 2);
+  const coreNames = shuffled(CORE_NAMES).slice(0, numCores);
+  const coreIds = [];
+  for (let i = 0; i < numCores; i++) {
+    const id = `core-${i + 1}`;
+    const x = numCores === 1 ? 0.50 : (i === 0 ? 0.32 : 0.68);
+    nodes.push({ id, label: coreNames[i], x, y: 0.42, type: 'switch' });
+    edges.push(['fw', id]);
+    coreIds.push(id);
+  }
+
+  // Access switches (2-4), each connects to nearest core, optionally redundant
+  const numAccess = randInt(2, 4);
+  const accessIds = [];
+  for (let i = 0; i < numAccess; i++) {
+    const id = `access-${i + 1}`;
+    const x = 0.06 + (i + 0.5) * (0.88 / numAccess);
+    nodes.push({ id, label: `Access-SW-${i + 1}`, x, y: 0.62, type: 'switch' });
+    // Prefer the core closest in x to keep edges from crossing wildly
+    const corePicks = [...coreIds].sort((a, b) => Math.abs(xOf(a) - x) - Math.abs(xOf(b) - x));
+    edges.push([corePicks[0], id]);
+    if (corePicks.length > 1 && Math.random() < 0.35) {
+      edges.push([corePicks[1], id]);
+    }
+    accessIds.push(id);
+  }
+
+  // Hosts (4-7), one is the critical asset
+  const numHosts = randInt(4, 7);
+  const hostNamePool = shuffled(HOST_NAMES);
+  const criticalIdx = randInt(0, numHosts - 1);
+  const criticalLabel = choice(CRIT_NAMES);
+  let criticalNodeId = null;
+
+  for (let i = 0; i < numHosts; i++) {
+    const id = `host-${i + 1}`;
+    const x = 0.05 + (i + 0.5) * (0.90 / numHosts);
+    const isCritical = i === criticalIdx;
+    const label = isCritical ? criticalLabel : hostNamePool[i % hostNamePool.length];
+    nodes.push({ id, label, x, y: 0.86, type: 'host' });
+    if (isCritical) criticalNodeId = id;
+
+    // Connect to closest access switch (with light randomness — 1 of nearest 2)
+    const accessPicks = [...accessIds].sort((a, b) => Math.abs(xOf(a) - x) - Math.abs(xOf(b) - x));
+    const primary = accessPicks[Math.min(randInt(0, 1), accessPicks.length - 1)];
+    edges.push([primary, id]);
+
+    // Optional redundant access link (25%)
+    if (accessIds.length > 1 && Math.random() < 0.25) {
+      const others = accessPicks.filter((a) => a !== primary);
+      edges.push([others[0], id]);
+    }
+  }
+
+  // 60% chance of an HA path: core → critical
+  if (Math.random() < 0.6) {
+    const haCore = choice(coreIds);
+    const dup = edges.some(([a, b]) =>
+      (a === haCore && b === criticalNodeId) || (b === haCore && a === criticalNodeId)
+    );
+    if (!dup) edges.push([haCore, criticalNodeId]);
+  }
+
+  return { nodes, edges, criticalNodeId };
 }
 
 const edgeKey = (a, b) => [a, b].sort().join('|');
@@ -154,6 +218,8 @@ function makeRoomCode() {
 }
 
 function newRoom() {
+  const gen = generateTopology();
+  console.log(`[room] generated topology: ${gen.nodes.length} nodes, ${gen.edges.length} edges, critical=${gen.criticalNodeId}`);
   return {
     players: new Map(),
     traversals: new Map(),
@@ -173,7 +239,8 @@ function newRoom() {
     threatInterval: null,
     spawnInterval: null,
     roundEndTimeout: null,
-    topology: cloneTopology(BASE_TOPOLOGY),
+    topology: { nodes: gen.nodes, edges: gen.edges },
+    criticalNode: gen.criticalNodeId,
     stats: { tasksCompleted: 0, threatsResolved: 0, threatsExpired: 0, nodesConnected: 0, nodesShadowed: 0 },
   };
 }
@@ -279,8 +346,10 @@ function expireThreat(io, code, threatId) {
   room.stats.threatsExpired++;
   console.log(`[${code}] THREAT expired: ${threat.name} @ ${threat.requiredNode}`);
 
-  if (threat.requiredNode === CRITICAL_NODE) {
-    gameOver(io, code, `Customer-DB compromised — ${threat.name}`);
+  if (threat.requiredNode === room.criticalNode) {
+    const critNode = nodeById(room.topology, room.criticalNode);
+    const critLabel = critNode ? critNode.label : 'Critical asset';
+    gameOver(io, code, `${critLabel} compromised — ${threat.name}`);
     return;
   }
   room.alertQueue++;
@@ -432,7 +501,7 @@ function publicSnapshot(room) {
     roundEndsAt: room.roundEndsAt,
     alertQueue: room.alertQueue,
     alertQueueMax: ALERT_QUEUE_MAX,
-    criticalNode: CRITICAL_NODE,
+    criticalNode: room.criticalNode,
     linkBuildCost: LINK_BUILD_COST,
     players: Array.from(room.players.values()).map((p) => ({
       id: p.id, name: p.name, color: p.color, role: p.role,
