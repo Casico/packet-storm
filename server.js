@@ -4,7 +4,7 @@ const path = require('path');
 const { Server } = require('socket.io');
 
 // ---- Constants ----
-const TRAVERSAL_MS = 3000;
+const TRAVERSAL_MS = 1500;
 
 const TASK_FIRE_MS = 10000;
 const TASK_WARMUP_MS = 5000;
