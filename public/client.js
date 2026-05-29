@@ -179,8 +179,12 @@ socket.on('shadow-it', ({ label }) => {
   showToast(`⚠ SHADOW IT: ${label} went unconnected`, 'warn');
 });
 
-socket.on('link-built', ({ label, byName }) => {
-  showToast(`🔗 LINK BUILT to ${label} by ${byName}`, 'success');
+socket.on('link-built', ({ label, byName, upgraded, newCapacity }) => {
+  if (upgraded) {
+    showToast(`🔗 LANE ADDED to ${label} — now ${newCapacity} lanes (by ${byName})`, 'success');
+  } else {
+    showToast(`🔗 LINK BUILT to ${label} by ${byName}`, 'success');
+  }
 });
 
 socket.on('build-fail', ({ reason }) => {
@@ -473,6 +477,10 @@ function findClickedNode(clickX, clickY) {
   }
   return null;
 }
+const MAX_EDGE_CAPACITY_CLIENT = 3;
+function existingEdgeBetween(a, b) {
+  return state.topology.edges.find(([x, y]) => (x === a && y === b) || (x === b && y === a));
+}
 canvas.addEventListener('click', (e) => {
   if (!buildMode || !state || !myId) return;
   const me = state.players.find((p) => p.id === myId);
@@ -481,10 +489,11 @@ canvas.addEventListener('click', (e) => {
   const clicked = findClickedNode(e.clientX - rect.left, e.clientY - rect.top);
   if (!clicked) return;
   if (clicked.id === me.node) { showToast('Pick a different node', 'warn'); return; }
-  const alreadyLinked = state.topology.edges.some(([a, b]) =>
-    (a === me.node && b === clicked.id) || (b === me.node && a === clicked.id)
-  );
-  if (alreadyLinked) { showToast('Already linked', 'warn'); return; }
+  const existing = existingEdgeBetween(me.node, clicked.id);
+  if (existing && (existing[2] || 1) >= MAX_EDGE_CAPACITY_CLIENT) {
+    showToast(`Already at max capacity (${MAX_EDGE_CAPACITY_CLIENT} lanes)`, 'warn');
+    return;
+  }
   socket.emit('build-link', { toNode: clicked.id });
   exitBuildMode();
 });
@@ -527,18 +536,36 @@ function render() {
     y: PAD + n.y * (h - 2 * PAD),
   });
 
-  // Edges
-  for (const [a, b] of state.topology.edges) {
+  // Edges — multi-lane rendering based on capacity (3rd element of edge triple)
+  for (const [a, b, capRaw] of state.topology.edges) {
+    const capacity = capRaw || 1;
     const pa = toPx(nodeById(a));
     const pb = toPx(nodeById(b));
     const key = [a, b].sort().join('|');
-    const busy = state.traversals.find((t) => t.edge === key);
-    ctx.strokeStyle = busy ? '#ff9c3f' : '#30363d';
-    ctx.lineWidth = busy ? 4 : 2;
-    ctx.beginPath();
-    ctx.moveTo(pa.x, pa.y);
-    ctx.lineTo(pb.x, pb.y);
-    ctx.stroke();
+    const busyCount = state.traversals.filter((t) => t.edge === key).length;
+    const fillRatio = busyCount / capacity;
+
+    let color, lineWidth;
+    if (busyCount === 0) { color = '#30363d'; lineWidth = 2; }
+    else if (fillRatio >= 1) { color = '#ff6b6b'; lineWidth = 4; }  // saturated
+    else if (fillRatio >= 0.5) { color = '#ff9c3f'; lineWidth = 4; } // partial
+    else { color = '#ffd960'; lineWidth = 3; }                       // light load
+
+    // Perpendicular unit vector for lane offset
+    const dx = pb.x - pa.x, dy = pb.y - pa.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    const laneGap = 5; // px between parallel lanes
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    for (let i = 0; i < capacity; i++) {
+      const off = (i - (capacity - 1) / 2) * laneGap;
+      ctx.beginPath();
+      ctx.moveTo(pa.x + nx * off, pa.y + ny * off);
+      ctx.lineTo(pb.x + nx * off, pb.y + ny * off);
+      ctx.stroke();
+    }
   }
 
   // Per-node threat lookup
@@ -653,11 +680,17 @@ function render() {
           ctx.fillText('FROM', p.x, p.y - NODE_RADIUS - 6);
           continue;
         }
-        const alreadyLinked = state.topology.edges.some(([a, b]) =>
+        const existing = state.topology.edges.find(([a, b]) =>
           (a === meNodeId && b === n.id) || (b === meNodeId && a === n.id)
         );
-        if (alreadyLinked) continue;
-        ctx.strokeStyle = `rgba(255, 156, 63, ${0.25 + pulse * 0.45})`;
+        const cap = existing ? (existing[2] || 1) : 0;
+        // Already maxed: no highlight (not actionable)
+        if (existing && cap >= MAX_EDGE_CAPACITY_CLIENT) continue;
+        // Existing but upgradeable: yellow tint hint (vs orange for new)
+        const isUpgrade = !!existing;
+        ctx.strokeStyle = isUpgrade
+          ? `rgba(255, 217, 96, ${0.30 + pulse * 0.40})`
+          : `rgba(255, 156, 63, ${0.25 + pulse * 0.45})`;
         ctx.lineWidth = 2;
         ctx.setLineDash([5, 4]);
         ctx.beginPath();

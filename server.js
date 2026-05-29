@@ -17,6 +17,7 @@ const BANDWIDTH_PER_THREAT = 2;
 const SPAWN_INTERVAL_MS = 60000;
 const SHADOW_TIMEOUT_MS = 45000;
 const LINK_BUILD_COST = 1;
+const MAX_EDGE_CAPACITY = 3;
 
 const ROUND_DURATION_MS = 8 * 60 * 1000;
 const ALERT_QUEUE_MAX = 6;
@@ -75,7 +76,7 @@ function generateTopology() {
 
   // Firewall (always 1)
   nodes.push({ id: 'fw', label: choice(FW_NAMES), x: 0.50, y: 0.22, type: 'firewall' });
-  edges.push(['internet', 'fw']);
+  edges.push(['internet', 'fw', 1]);
 
   // Cores (1 or 2)
   const numCores = randInt(1, 2);
@@ -85,7 +86,7 @@ function generateTopology() {
     const id = `core-${i + 1}`;
     const x = numCores === 1 ? 0.50 : (i === 0 ? 0.32 : 0.68);
     nodes.push({ id, label: coreNames[i], x, y: 0.42, type: 'switch' });
-    edges.push(['fw', id]);
+    edges.push(['fw', id, 1]);
     coreIds.push(id);
   }
 
@@ -98,9 +99,9 @@ function generateTopology() {
     nodes.push({ id, label: `Access-SW-${i + 1}`, x, y: 0.62, type: 'switch' });
     // Prefer the core closest in x to keep edges from crossing wildly
     const corePicks = [...coreIds].sort((a, b) => Math.abs(xOf(a) - x) - Math.abs(xOf(b) - x));
-    edges.push([corePicks[0], id]);
+    edges.push([corePicks[0], id, 1]);
     if (corePicks.length > 1 && Math.random() < 0.35) {
-      edges.push([corePicks[1], id]);
+      edges.push([corePicks[1], id, 1]);
     }
     accessIds.push(id);
   }
@@ -123,12 +124,12 @@ function generateTopology() {
     // Connect to closest access switch (with light randomness — 1 of nearest 2)
     const accessPicks = [...accessIds].sort((a, b) => Math.abs(xOf(a) - x) - Math.abs(xOf(b) - x));
     const primary = accessPicks[Math.min(randInt(0, 1), accessPicks.length - 1)];
-    edges.push([primary, id]);
+    edges.push([primary, id, 1]);
 
     // Optional redundant access link (25%)
     if (accessIds.length > 1 && Math.random() < 0.25) {
       const others = accessPicks.filter((a) => a !== primary);
-      edges.push([others[0], id]);
+      edges.push([others[0], id, 1]);
     }
   }
 
@@ -138,7 +139,7 @@ function generateTopology() {
     const dup = edges.some(([a, b]) =>
       (a === haCore && b === criticalNodeId) || (b === haCore && a === criticalNodeId)
     );
-    if (!dup) edges.push([haCore, criticalNodeId]);
+    if (!dup) edges.push([haCore, criticalNodeId, 1]);
   }
 
   return { nodes, edges, criticalNodeId };
@@ -149,6 +150,12 @@ const neighborsOf = (topo, id) =>
   topo.edges.filter(([a, b]) => a === id || b === id).map(([a, b]) => (a === id ? b : a));
 const nodeById = (topo, id) => topo.nodes.find((n) => n.id === id);
 const isConnected = (topo, id) => topo.edges.some(([a, b]) => a === id || b === id);
+const findEdge = (topo, a, b) =>
+  topo.edges.find(([x, y]) => (x === a && y === b) || (x === b && y === a));
+const capacityOf = (topo, a, b) => {
+  const e = findEdge(topo, a, b);
+  return e ? (e[2] || 1) : 1;
+};
 
 // ---- Random helpers ----
 const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
@@ -507,9 +514,9 @@ function publicSnapshot(room) {
       id: p.id, name: p.name, color: p.color, role: p.role,
       node: p.node, traversing: p.traversing,
     })),
-    traversals: Array.from(room.traversals.entries()).map(([edge, t]) => ({
-      edge, playerId: t.playerId, startedAt: t.startedAt,
-    })),
+    traversals: Array.from(room.traversals.entries()).flatMap(([edge, arr]) =>
+      arr.map((t) => ({ edge, playerId: t.playerId, startedAt: t.startedAt }))
+    ),
     threats: Array.from(room.threats.values()).map((t) => ({
       id: t.id, requiredRole: t.requiredRole, requiredNode: t.requiredNode,
       nodeLabel: t.nodeLabel, name: t.name, expiresAt: t.expiresAt,
@@ -645,10 +652,13 @@ io.on('connection', (socket) => {
     if (!player || player.traversing) return;
     if (!neighborsOf(room.topology, player.node).includes(toNode)) return;
     const key = edgeKey(player.node, toNode);
-    if (room.traversals.has(key)) { socket.emit('blocked', { edge: key }); return; }
+    const cap = capacityOf(room.topology, player.node, toNode);
+    const lanes = room.traversals.get(key) || [];
+    if (lanes.length >= cap) { socket.emit('blocked', { edge: key }); return; }
     const startedAt = Date.now();
     player.traversing = { fromNode: player.node, toNode, startedAt };
-    room.traversals.set(key, { playerId: socket.id, startedAt });
+    lanes.push({ playerId: socket.id, startedAt });
+    room.traversals.set(key, lanes);
     emitState(io, currentRoom);
     setTimeout(() => {
       const r = rooms.get(currentRoom);
@@ -657,7 +667,9 @@ io.on('connection', (socket) => {
       if (!p || !p.traversing) return;
       p.node = p.traversing.toNode;
       p.traversing = null;
-      r.traversals.delete(key);
+      const remaining = (r.traversals.get(key) || []).filter((x) => x.playerId !== socket.id);
+      if (remaining.length === 0) r.traversals.delete(key);
+      else r.traversals.set(key, remaining);
       emitState(io, currentRoom);
     }, TRAVERSAL_MS);
   });
@@ -743,15 +755,28 @@ io.on('connection', (socket) => {
       socket.emit('build-fail', { reason: 'Pick a different node' });
       return;
     }
-    const alreadyLinked = room.topology.edges.some(([a, b]) =>
-      (a === player.node && b === target.id) || (b === player.node && a === target.id)
-    );
-    if (alreadyLinked) {
-      socket.emit('build-fail', { reason: 'Link already exists' });
+    const existing = findEdge(room.topology, player.node, target.id);
+
+    if (existing) {
+      // Upgrade existing link's capacity (add a lane)
+      const currentCap = existing[2] || 1;
+      if (currentCap >= MAX_EDGE_CAPACITY) {
+        socket.emit('build-fail', { reason: `Link already at max capacity (${MAX_EDGE_CAPACITY} lanes)` });
+        return;
+      }
+      existing[2] = currentCap + 1;
+      room.bandwidth -= LINK_BUILD_COST;
+      console.log(`[${currentRoom}] LANE ADDED: ${player.node} <-> ${target.id} now ${existing[2]} lanes (by ${player.name})`);
+      io.to(currentRoom).emit('link-built', {
+        from: player.node, to: target.id, label: target.label, byName: player.name,
+        upgraded: true, newCapacity: existing[2],
+      });
+      emitState(io, currentRoom);
       return;
     }
 
-    room.topology.edges.push([player.node, target.id]);
+    // New edge
+    room.topology.edges.push([player.node, target.id, 1]);
     room.bandwidth -= LINK_BUILD_COST;
     room.stats.nodesConnected++;
 
@@ -764,6 +789,7 @@ io.on('connection', (socket) => {
     console.log(`[${currentRoom}] LINK BUILT: ${player.node} <-> ${target.id} by ${player.name}`);
     io.to(currentRoom).emit('link-built', {
       from: player.node, to: target.id, label: target.label, byName: player.name,
+      upgraded: false, newCapacity: 1,
     });
     emitState(io, currentRoom);
   });
@@ -775,8 +801,9 @@ io.on('connection', (socket) => {
     const player = room.players.get(socket.id);
     if (player && player.traversing) {
       const key = edgeKey(player.traversing.fromNode, player.traversing.toNode);
-      const lock = room.traversals.get(key);
-      if (lock && lock.playerId === socket.id) room.traversals.delete(key);
+      const remaining = (room.traversals.get(key) || []).filter((x) => x.playerId !== socket.id);
+      if (remaining.length === 0) room.traversals.delete(key);
+      else room.traversals.set(key, remaining);
     }
     const heldTaskId = room.taskHolders.get(socket.id);
     if (heldTaskId) {
