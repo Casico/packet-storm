@@ -29,11 +29,11 @@ html, body {
 
 #lobby-logo {
   display: block;
-  max-width: min(420px, 70vw);
+  max-width: min(680px, 88vw);
   width: 100%;
   height: auto;
-  margin-bottom: 4px;
-  filter: drop-shadow(0 6px 24px rgba(255, 200, 60, 0.18));
+  margin-bottom: 8px;
+  filter: drop-shadow(0 8px 30px rgba(255, 200, 60, 0.22));
 }
 
 .tagline { opacity: 0.6; margin-bottom: 14px; }
