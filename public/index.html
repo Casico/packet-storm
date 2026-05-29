@@ -19,19 +19,29 @@
       <button id="join-btn">Join</button>
     </div>
     <p id="lobby-msg"></p>
-    <p class="footnote">v0.13 prototype — logo art.</p>
+    <p class="footnote">v0.14 prototype — HUD logo, role panel, node-type icons.</p>
   </div>
 
   <div id="game" class="hidden">
     <div id="hud">
-      <span id="room-label"></span>
-      <span id="my-role"></span>
+      <span id="hud-left">
+        <img id="hud-logo" src="/assets/logo.png" alt="" />
+        <span id="room-label"></span>
+      </span>
       <span id="hud-right">
         <span id="round-timer"></span>
         <span id="alert-queue"></span>
         <span id="bandwidth"></span>
         <span id="player-count"></span>
       </span>
+    </div>
+
+    <div id="role-panel">
+      <div class="role-panel-header">
+        <span id="role-panel-icon"></span>
+        <span id="role-panel-name">—</span>
+      </div>
+      <div id="role-panel-body"></div>
     </div>
     <div id="roster"></div>
     <canvas id="canvas"></canvas>
@@ -52,6 +62,7 @@
 
     <div id="lobby-card">
       <div class="lobby-card-inner">
+        <img class="card-logo" src="/assets/logo.png" alt="" />
         <div class="lobby-eyebrow">ROOM <span id="lobby-room-code"></span></div>
         <h2>Waiting to start</h2>
         <p class="lobby-hint">Share the link so your team can join. Move your token around to get oriented.</p>
@@ -63,6 +74,7 @@
 
     <div id="overlay">
       <div class="overlay-card">
+        <img class="card-logo" src="/assets/logo.png" alt="" />
         <h2 id="overlay-title"></h2>
         <p id="overlay-reason"></p>
         <div id="overlay-stats"></div>

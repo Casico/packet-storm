@@ -12,8 +12,11 @@ const playerCount = document.getElementById('player-count');
 const bandwidthEl = document.getElementById('bandwidth');
 const roundTimerEl = document.getElementById('round-timer');
 const alertQueueEl = document.getElementById('alert-queue');
-const myRoleEl = document.getElementById('my-role');
 const rosterEl = document.getElementById('roster');
+const rolePanelEl = document.getElementById('role-panel');
+const rolePanelIconEl = document.getElementById('role-panel-icon');
+const rolePanelNameEl = document.getElementById('role-panel-name');
+const rolePanelBodyEl = document.getElementById('role-panel-body');
 const taskPanelEl = document.getElementById('task-panel');
 const taskRoleEl = document.getElementById('task-role');
 const taskVerbEl = document.getElementById('task-verb');
@@ -43,6 +46,38 @@ const ROLE_COLORS = {
 };
 const ROLE_ABBR = {
   NetEng: 'NET', SecOps: 'SEC', SysAdmin: 'SYS', NOC: 'NOC',
+};
+
+const ROLE_INFO = {
+  NetEng: {
+    icon: '🔧',
+    body: `<p>Configure VLANs, routes, interfaces. Build & upgrade <strong>links</strong>.</p>
+           <p>Hit: BGP flaps, STP storms, MTU mismatches.</p>
+           <p>Press <span class="key">B</span> then click a node to build/upgrade a link (1 BW).</p>`,
+  },
+  SecOps: {
+    icon: '🛡️',
+    body: `<p>Firewall rules, ACLs, IP blocks, VLAN quarantine.</p>
+           <p>Hit: port scans, ransomware, brute force, MAC floods.</p>`,
+  },
+  SysAdmin: {
+    icon: '💻',
+    body: `<p>Patch CVEs, restart services, rotate creds, apt upgrades.</p>
+           <p>Hit: zero-days, disk-full, service crashes on hosts.</p>`,
+  },
+  NOC: {
+    icon: '📟',
+    body: `<p>Open/ack tickets, run packet captures, page on-call.</p>
+           <p>Hit: cryptic alerts anywhere on the map.</p>
+           <p>One per room — you're solo. Triage everything.</p>`,
+  },
+};
+
+const NODE_TYPE_ICON = {
+  external: '🌐',
+  firewall: '🛡️',
+  switch:   '🔀',
+  host:     '🖥️',
 };
 
 let state = null;
@@ -256,8 +291,14 @@ function updateHud() {
   if (!state || !myId) return;
   const me = state.players.find((p) => p.id === myId);
   if (me) {
-    myRoleEl.textContent = `YOU ARE ${me.role.toUpperCase()}`;
-    myRoleEl.style.color = ROLE_COLORS[me.role] || '#e6edf3';
+    const info = ROLE_INFO[me.role];
+    if (info) {
+      rolePanelIconEl.textContent = info.icon;
+      rolePanelNameEl.textContent = me.role.toUpperCase();
+      rolePanelNameEl.style.color = ROLE_COLORS[me.role] || '#e6edf3';
+      rolePanelEl.style.borderLeftColor = ROLE_COLORS[me.role] || '#30363d';
+      rolePanelBodyEl.innerHTML = info.body;
+    }
   }
   bandwidthEl.textContent = `⚡ ${state.bandwidth}`;
   playerCount.textContent = `${state.players.length}p`;
@@ -656,11 +697,22 @@ function render() {
     ctx.stroke();
     if (dashed) ctx.setLineDash([]);
 
+    // Node-type glyph above the label (skip for unconnected spawns to keep them visually distinct)
+    if (!n.isSpawn) {
+      const glyph = NODE_TYPE_ICON[n.type];
+      if (glyph) {
+        ctx.font = '18px -apple-system, "Apple Color Emoji", "Segoe UI Emoji", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(glyph, p.x, p.y - 10);
+      }
+    }
+
     ctx.fillStyle = '#e6edf3';
     ctx.font = '12px -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(n.label, p.x, p.y);
+    ctx.fillText(n.label, p.x, p.y + 12);
 
     // Unlinked countdown below spawn node
     if (n.isSpawn && n.shadowAt) {
