@@ -456,19 +456,6 @@ function neighborsOf(id) {
   return state.topology.edges
     .filter(([a, b]) => a === id || b === id).map(([a, b]) => (a === id ? b : a));
 }
-function findNeighborInDirection(currentNodeId, dx, dy) {
-  const cur = nodeById(currentNodeId);
-  let best = null, bestScore = -Infinity;
-  for (const nid of neighborsOf(currentNodeId)) {
-    const n = nodeById(nid);
-    const vx = n.x - cur.x, vy = n.y - cur.y;
-    const mag = Math.hypot(vx, vy);
-    if (mag === 0) continue;
-    const score = (vx * dx + vy * dy) / mag;
-    if (score > bestScore) { bestScore = score; best = nid; }
-  }
-  return bestScore > 0.3 ? best : null;
-}
 
 window.addEventListener('keydown', (e) => {
   if (!state || !myId) return;
@@ -486,20 +473,6 @@ window.addEventListener('keydown', (e) => {
     if (buildMode) { e.preventDefault(); exitBuildMode(); }
     return;
   }
-  const me = state.players.find((p) => p.id === myId);
-  if (!me || me.traversing) return;
-  let dx = 0, dy = 0;
-  switch (e.key) {
-    case 'ArrowUp': dy = -1; break;
-    case 'ArrowDown': dy = 1; break;
-    case 'ArrowLeft': dx = -1; break;
-    case 'ArrowRight': dx = 1; break;
-    default: return;
-  }
-  e.preventDefault();
-  if (buildMode) exitBuildMode();
-  const target = findNeighborInDirection(me.node, dx, dy);
-  if (target) socket.emit('move', { toNode: target });
 });
 
 // Click-to-build target selection
@@ -520,21 +493,54 @@ function existingEdgeBetween(a, b) {
   return state.topology.edges.find(([x, y]) => (x === a && y === b) || (x === b && y === a));
 }
 canvas.addEventListener('click', (e) => {
-  if (!buildMode || !state || !myId) return;
+  if (!state || !myId) return;
   const me = state.players.find((p) => p.id === myId);
   if (!me) return;
   const rect = canvas.getBoundingClientRect();
   const clicked = findClickedNode(e.clientX - rect.left, e.clientY - rect.top);
   if (!clicked) return;
-  if (clicked.id === me.node) { showToast('Pick a different node', 'warn'); return; }
-  const existing = existingEdgeBetween(me.node, clicked.id);
-  if (existing && (existing[2] || 1) >= MAX_EDGE_CAPACITY_CLIENT) {
-    showToast(`Already at max capacity (${MAX_EDGE_CAPACITY_CLIENT} lanes)`, 'warn');
+
+  if (buildMode) {
+    if (clicked.id === me.node) { showToast('Pick a different node', 'warn'); return; }
+    const existing = existingEdgeBetween(me.node, clicked.id);
+    if (existing && (existing[2] || 1) >= MAX_EDGE_CAPACITY_CLIENT) {
+      showToast(`Already at max capacity (${MAX_EDGE_CAPACITY_CLIENT} lanes)`, 'warn');
+      return;
+    }
+    socket.emit('build-link', { toNode: clicked.id });
+    exitBuildMode();
     return;
   }
-  socket.emit('build-link', { toNode: clicked.id });
-  exitBuildMode();
+
+  // Normal movement: click a connected neighbor to traverse there
+  if (me.traversing) return;
+  if (clicked.id === me.node) return;
+  if (!neighborsOf(me.node).includes(clicked.id)) return;
+  socket.emit('move', { toNode: clicked.id });
 });
+
+// Hover feedback: cursor becomes pointer over a clickable neighbor
+let hoveredNodeId = null;
+canvas.addEventListener('mousemove', (e) => {
+  if (!state || !myId) { hoveredNodeId = null; return; }
+  const rect = canvas.getBoundingClientRect();
+  const hover = findClickedNode(e.clientX - rect.left, e.clientY - rect.top);
+  hoveredNodeId = hover ? hover.id : null;
+  updateCursor();
+});
+canvas.addEventListener('mouseleave', () => { hoveredNodeId = null; updateCursor(); });
+
+function updateCursor() {
+  if (buildMode) { canvas.style.cursor = 'crosshair'; return; }
+  if (!state || !myId || !hoveredNodeId) { canvas.style.cursor = ''; return; }
+  const me = state.players.find((p) => p.id === myId);
+  if (!me || me.traversing) { canvas.style.cursor = ''; return; }
+  if (neighborsOf(me.node).includes(hoveredNodeId)) {
+    canvas.style.cursor = 'pointer';
+  } else {
+    canvas.style.cursor = '';
+  }
+}
 
 // ---- Render ----
 const NODE_RADIUS = 50;
@@ -584,19 +590,20 @@ function render() {
     const fillRatio = busyCount / capacity;
 
     let color, lineWidth;
-    if (busyCount === 0) { color = '#30363d'; lineWidth = 2; }
-    else if (fillRatio >= 1) { color = '#ff6b6b'; lineWidth = 4; }  // saturated
-    else if (fillRatio >= 0.5) { color = '#ff9c3f'; lineWidth = 4; } // partial
-    else { color = '#ffd960'; lineWidth = 3; }                       // light load
+    if (busyCount === 0)         { color = '#3a4250'; lineWidth = 5; }  // idle
+    else if (fillRatio >= 1)     { color = '#ff6b6b'; lineWidth = 8; }  // saturated
+    else if (fillRatio >= 0.5)   { color = '#ff9c3f'; lineWidth = 7; }  // partial
+    else                         { color = '#ffd960'; lineWidth = 6; }  // light
 
     // Perpendicular unit vector for lane offset
     const dx = pb.x - pa.x, dy = pb.y - pa.y;
     const len = Math.hypot(dx, dy) || 1;
     const nx = -dy / len, ny = dx / len;
-    const laneGap = 5; // px between parallel lanes
+    const laneGap = 10; // px between parallel lanes — leaves clear separation at widths 5-8
 
     ctx.strokeStyle = color;
     ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
     for (let i = 0; i < capacity; i++) {
       const off = (i - (capacity - 1) / 2) * laneGap;
       ctx.beginPath();
@@ -604,6 +611,7 @@ function render() {
       ctx.lineTo(pb.x + nx * off, pb.y + ny * off);
       ctx.stroke();
     }
+    ctx.lineCap = 'butt';
   }
 
   // Per-node threat lookup
@@ -700,6 +708,29 @@ function render() {
       ctx.textBaseline = 'middle';
       ctx.fillText(ROLE_ABBR[th.requiredRole] || '?', p.x, badgeY);
     });
+  }
+
+  // Navigation hint: subtle ring around clickable neighbors when not in build mode
+  if (!buildMode) {
+    const me = state.players.find((p) => p.id === myId);
+    if (me && !me.traversing && (state.gameState === 'playing' || state.gameState === 'lobby')) {
+      const myNeighbors = neighborsOf(me.node);
+      for (const nid of myNeighbors) {
+        const n = nodeById(nid);
+        if (!n) continue;
+        const p = toPx(n);
+        const isHovered = nid === hoveredNodeId;
+        ctx.strokeStyle = isHovered
+          ? 'rgba(88, 166, 255, 0.85)'
+          : 'rgba(88, 166, 255, 0.30)';
+        ctx.lineWidth = isHovered ? 3 : 2;
+        ctx.setLineDash(isHovered ? [] : [3, 4]);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, NODE_RADIUS + 6, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
   }
 
   // Build-mode overlay: highlight clickable targets + label source node
