@@ -27,6 +27,15 @@ html, body {
   font-weight: 800;
 }
 
+#lobby-logo {
+  display: block;
+  max-width: min(420px, 70vw);
+  width: 100%;
+  height: auto;
+  margin-bottom: 4px;
+  filter: drop-shadow(0 6px 24px rgba(255, 200, 60, 0.18));
+}
+
 .tagline { opacity: 0.6; margin-bottom: 14px; }
 
 #lobby input,
