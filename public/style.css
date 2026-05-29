@@ -512,6 +512,45 @@ html, body {
   border-radius: 50%;
   display: inline-block;
 }
+.lobby-howto {
+  text-align: left;
+  background: #0e1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 0 0 18px;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+.lobby-howto-title {
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  opacity: 0.55;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.lobby-howto ul {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+.lobby-howto li {
+  padding: 3px 0;
+  opacity: 0.92;
+}
+.lobby-howto-sub p {
+  margin: 5px 0;
+  opacity: 0.78;
+  font-size: 0.82rem;
+}
+.lobby-howto .key {
+  font-family: ui-monospace, monospace;
+  background: #161b22;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid #30363d;
+  font-size: 0.78rem;
+}
 #start-btn {
   background: #7ee787;
   color: #0e1117;

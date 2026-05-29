@@ -18,6 +18,7 @@ const SPAWN_INTERVAL_MS = 60000;
 const SHADOW_TIMEOUT_MS = 45000;
 const LINK_BUILD_COST = 1;
 const MAX_EDGE_CAPACITY = 3;
+const MAX_NODE_DEGREE = 6;
 
 const ROUND_DURATION_MS = 8 * 60 * 1000;
 const ALERT_QUEUE_MAX = 6;
@@ -156,6 +157,8 @@ const capacityOf = (topo, a, b) => {
   const e = findEdge(topo, a, b);
   return e ? (e[2] || 1) : 1;
 };
+const degreeOf = (topo, id) =>
+  topo.edges.reduce((n, [a, b]) => n + (a === id || b === id ? 1 : 0), 0);
 
 // ---- Random helpers ----
 const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
@@ -562,6 +565,8 @@ function publicSnapshot(room) {
     alertQueueMax: ALERT_QUEUE_MAX,
     criticalNode: room.criticalNode,
     linkBuildCost: LINK_BUILD_COST,
+    maxEdgeCapacity: MAX_EDGE_CAPACITY,
+    maxNodeDegree: MAX_NODE_DEGREE,
     players: Array.from(room.players.values()).map((p) => ({
       id: p.id, name: p.name, color: p.color, role: p.role,
       node: p.node, traversing: p.traversing,
@@ -817,6 +822,20 @@ io.on('connection', (socket) => {
       return;
     }
     const existing = findEdge(room.topology, player.node, target.id);
+
+    // Degree check (only matters for NEW edges; capacity upgrades don't add a degree)
+    if (!existing) {
+      const fromDeg = degreeOf(room.topology, player.node);
+      const toDeg = degreeOf(room.topology, target.id);
+      if (fromDeg >= MAX_NODE_DEGREE) {
+        socket.emit('build-fail', { reason: `Your node ${fromNode.label} is at max links (${MAX_NODE_DEGREE})` });
+        return;
+      }
+      if (toDeg >= MAX_NODE_DEGREE) {
+        socket.emit('build-fail', { reason: `${target.label} is at max links (${MAX_NODE_DEGREE})` });
+        return;
+      }
+    }
 
     if (existing) {
       // Upgrade existing link's capacity (add a lane)

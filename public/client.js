@@ -529,9 +529,11 @@ function findClickedNode(clickX, clickY) {
   }
   return null;
 }
-const MAX_EDGE_CAPACITY_CLIENT = 3;
 function existingEdgeBetween(a, b) {
   return state.topology.edges.find(([x, y]) => (x === a && y === b) || (x === b && y === a));
+}
+function degreeOfClient(id) {
+  return state.topology.edges.reduce((n, [a, b]) => n + (a === id || b === id ? 1 : 0), 0);
 }
 canvas.addEventListener('click', (e) => {
   if (!state || !myId) return;
@@ -544,9 +546,21 @@ canvas.addEventListener('click', (e) => {
   if (buildMode) {
     if (clicked.id === me.node) { showToast('Pick a different node', 'warn'); return; }
     const existing = existingEdgeBetween(me.node, clicked.id);
-    if (existing && (existing[2] || 1) >= MAX_EDGE_CAPACITY_CLIENT) {
-      showToast(`Already at max capacity (${MAX_EDGE_CAPACITY_CLIENT} lanes)`, 'warn');
+    const maxCap = state.maxEdgeCapacity || 3;
+    const maxDeg = state.maxNodeDegree || 6;
+    if (existing && (existing[2] || 1) >= maxCap) {
+      showToast(`Link already at max capacity (${maxCap} lanes)`, 'warn');
       return;
+    }
+    if (!existing) {
+      if (degreeOfClient(me.node) >= maxDeg) {
+        showToast(`Your node is at max links (${maxDeg})`, 'warn');
+        return;
+      }
+      if (degreeOfClient(clicked.id) >= maxDeg) {
+        showToast(`${clicked.label} is at max links (${maxDeg})`, 'warn');
+        return;
+      }
     }
     socket.emit('build-link', { toNode: clicked.id });
     exitBuildMode();
@@ -805,9 +819,12 @@ function render() {
           (a === meNodeId && b === n.id) || (b === meNodeId && a === n.id)
         );
         const cap = existing ? (existing[2] || 1) : 0;
-        // Already maxed: no highlight (not actionable)
-        if (existing && cap >= MAX_EDGE_CAPACITY_CLIENT) continue;
-        // Existing but upgradeable: yellow tint hint (vs orange for new)
+        const maxCap = state.maxEdgeCapacity || 3;
+        const maxDeg = state.maxNodeDegree || 6;
+        // Already at max capacity: no highlight (no action available)
+        if (existing && cap >= maxCap) continue;
+        // No existing edge but a new one would violate degree limit on either end: skip
+        if (!existing && (degreeOfClient(meNodeId) >= maxDeg || degreeOfClient(n.id) >= maxDeg)) continue;
         const isUpgrade = !!existing;
         ctx.strokeStyle = isUpgrade
           ? `rgba(255, 217, 96, ${0.30 + pulse * 0.40})`

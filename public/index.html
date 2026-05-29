@@ -19,7 +19,7 @@
       <button id="join-btn">Join</button>
     </div>
     <p id="lobby-msg"></p>
-    <p class="footnote">v0.15 prototype — bigger HUD, faster traversal (1.5s).</p>
+    <p class="footnote">v0.16 prototype — max 6 links/node, lobby how-to.</p>
   </div>
 
   <div id="game" class="hidden">
@@ -67,6 +67,22 @@
         <h2>Waiting to start</h2>
         <p class="lobby-hint">Share the link so your team can join. Move your token around to get oriented.</p>
         <button id="copy-link-btn">📋 Copy invite link</button>
+
+        <div class="lobby-howto">
+          <div class="lobby-howto-title">HOW TO PLAY</div>
+          <ul>
+            <li><strong>Goal:</strong> survive 8 minutes. Don't let the purple-bordered node (the critical asset) fall, and don't let 7 threats expire.</li>
+            <li><strong>Move:</strong> click any connected node.</li>
+            <li><strong>Act:</strong> press <span class="key">SPACE</span> at a node with a task or threat for <em>your role</em>.</li>
+            <li><strong>Build (NetEng only):</strong> press <span class="key">B</span>, then click any node to build a new link or upgrade an existing one (1 BW).</li>
+          </ul>
+          <div class="lobby-howto-sub">
+            <p>📋 <strong>Tasks</strong> (right panel) — only you see them. Yell it out so the right role can race over.</p>
+            <p>⚠ <strong>Threats</strong> (red pulsing ring on map) — everyone sees. Get there before the timer runs out.</p>
+            <p>🎙 Hop on Discord or Zoom — voice chat is the game.</p>
+          </div>
+        </div>
+
         <div id="lobby-roster"></div>
         <div id="lobby-action"></div>
       </div>
