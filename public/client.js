@@ -21,6 +21,9 @@ const defconBadgeEl = document.getElementById('defcon-badge');
 const taskCountsEl = document.getElementById('task-counts');
 const freezeBannerEl = document.getElementById('freeze-banner');
 const muteBtnEl = document.getElementById('mute-btn');
+const btnAct = document.getElementById('btn-act');
+const btnBuild = document.getElementById('btn-build');
+const btnBail = document.getElementById('btn-bail');
 
 // Background music — created lazily on first user gesture (browser autoplay rules)
 let bgmEl = null;
@@ -31,6 +34,59 @@ function ensureBgm() {
   bgmEl.loop = true;
   bgmEl.volume = 0.22;
   return bgmEl;
+}
+
+// SFX via Web Audio API (no asset files needed)
+let audioCtx = null;
+function ensureAudioCtx() {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) audioCtx = new AC();
+  }
+  return audioCtx;
+}
+function tone(freq, dur, gainPeak = 0.15, type = 'sine', startOffset = 0) {
+  if (bgmMuted) return;
+  const ctx = ensureAudioCtx();
+  if (!ctx) return;
+  const t0 = ctx.currentTime + startOffset;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(gainPeak, t0 + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(g).connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + dur + 0.02);
+}
+function sfxDing() { tone(880, 0.12, 0.16); tone(1320, 0.18, 0.13, 'sine', 0.08); }
+function sfxSuccess() { tone(523, 0.08, 0.14); tone(659, 0.08, 0.14, 'sine', 0.06); tone(784, 0.18, 0.14, 'sine', 0.12); }
+function sfxFail() { tone(220, 0.20, 0.18, 'sawtooth'); tone(165, 0.35, 0.20, 'sawtooth', 0.10); }
+function sfxPhone() {
+  for (let i = 0; i < 4; i++) tone(880, 0.08, 0.13, 'square', i * 0.18);
+}
+function sfxSiren() {
+  if (bgmMuted) return;
+  const ctx = ensureAudioCtx();
+  if (!ctx) return;
+  const t0 = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  const g = ctx.createGain();
+  osc.type = 'sawtooth';
+  // wail up-down-up-down
+  osc.frequency.setValueAtTime(440, t0);
+  osc.frequency.linearRampToValueAtTime(720, t0 + 0.15);
+  osc.frequency.linearRampToValueAtTime(440, t0 + 0.30);
+  osc.frequency.linearRampToValueAtTime(720, t0 + 0.45);
+  osc.frequency.linearRampToValueAtTime(440, t0 + 0.60);
+  g.gain.setValueAtTime(0, t0);
+  g.gain.linearRampToValueAtTime(0.20, t0 + 0.02);
+  g.gain.linearRampToValueAtTime(0, t0 + 0.62);
+  osc.connect(g).connect(ctx.destination);
+  osc.start(t0);
+  osc.stop(t0 + 0.65);
 }
 function setMuted(muted) {
   bgmMuted = muted;
@@ -46,6 +102,35 @@ function startBgm() {
 }
 muteBtnEl.addEventListener('click', () => setMuted(!bgmMuted));
 setMuted(bgmMuted); // sync icon at load
+
+// On-screen action buttons (mobile-friendly mirror of SPACE / B / F-hold)
+btnAct.addEventListener('click', () => {
+  if (!state || !myId) return;
+  socket.emit('complete-task');
+});
+btnBuild.addEventListener('click', () => {
+  if (!state || !myId) return;
+  toggleBuildMode();
+});
+// Bail button uses pointerdown/up to mirror the F-hold mechanic
+btnBail.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (!state || !myId) return;
+  const me = state.players.find((p) => p.id === myId);
+  if (!me || !me.frozenUntil || bailHoldTimer) return;
+  bailHoldStartedAt = performance.now();
+  bailHoldTimer = setTimeout(() => {
+    socket.emit('distraction-bail');
+    bailHoldTimer = null;
+    bailHoldStartedAt = 0;
+  }, BAIL_HOLD_MS);
+});
+const cancelBail = () => {
+  if (bailHoldTimer) { clearTimeout(bailHoldTimer); bailHoldTimer = null; bailHoldStartedAt = 0; }
+};
+btnBail.addEventListener('pointerup', cancelBail);
+btnBail.addEventListener('pointercancel', cancelBail);
+btnBail.addEventListener('pointerleave', cancelBail);
 const taskPanelEl = document.getElementById('task-panel');
 const taskRoleEl = document.getElementById('task-role');
 const taskVerbEl = document.getElementById('task-verb');
@@ -219,21 +304,35 @@ function onJoined(resp) {
 }
 
 // ---- Socket events ----
+let prevThreatIds = null;
 socket.on('state', (s) => {
+  // Detect newly-appearing threats → siren (skip very first state to avoid welcome-siren)
+  const currentThreatIds = new Set((s.threats || []).map((t) => t.id));
+  if (prevThreatIds !== null) {
+    for (const id of currentThreatIds) {
+      if (!prevThreatIds.has(id)) { sfxSiren(); break; }
+    }
+  }
+  prevThreatIds = currentThreatIds;
+
   state = s;
   updateHud();
   // Hide game-over overlay if the room has reset back to lobby/playing
   if (s.gameState === 'lobby' || s.gameState === 'playing') {
     overlayEl.className = '';
   } else if (overlayEl.classList.contains('show')) {
-    // Re-render the action in case host changed (or initial render)
     renderOverlayAction();
   }
 });
 
+let prevMyTaskId = null;
 socket.on('private', (payload) => {
   console.log('[private]', payload);
-  myTask = (payload && payload.myTask) || null;
+  const newTask = (payload && payload.myTask) || null;
+  // New task assigned to me → ding
+  if (newTask && newTask.id !== prevMyTaskId) sfxDing();
+  prevMyTaskId = newTask ? newTask.id : null;
+  myTask = newTask;
   completable = (payload && payload.completable) || null;
   buildHint = (payload && payload.buildHint) || null;
   updateTaskPanel();
@@ -241,27 +340,32 @@ socket.on('private', (payload) => {
   updateBuildPrompt();
 });
 
-socket.on('task-completed', ({ holderId, completedByName }) => {
+socket.on('task-completed', ({ holderId, completedById, completedByName }) => {
   if (holderId === myId) showToast(`✓ DONE BY ${completedByName}`, 'success');
+  if (holderId === myId || completedById === myId) sfxSuccess();
 });
 
 socket.on('threat-resolved', ({ name, nodeLabel, byName, multi }) => {
   const prefix = multi ? '✓✓ MULTI-THREAT' : '✓';
   showToast(`${prefix} ${name.toUpperCase()} resolved by ${byName}`, 'success');
+  sfxSuccess();
 });
 
 socket.on('threat-step', ({ name, role, byName, remaining }) => {
   const remStr = remaining.map((r) => ROLE_ABBR[r] || r).join(', ');
   showToast(`✓ ${ROLE_ABBR[role] || role} step done by ${byName} — still need: ${remStr}`, 'warn');
+  sfxDing();
 });
 
 socket.on('threat-expired', ({ name, nodeLabel }) => {
   showToast(`⚠ ${name.toUpperCase()} on ${nodeLabel} EXPIRED`, 'warn');
+  sfxFail();
 });
 
 socket.on('distraction-start', ({ playerId, playerName, verb, durationMs }) => {
   if (playerId === myId) {
-    showToast(`📞 ${verb} — frozen ${Math.round(durationMs/1000)}s. Hold F to bail (+1 alert).`, 'warn');
+    showToast(`📞 ${verb} — frozen ${Math.round(durationMs/1000)}s. Hold F (or BAIL btn) to skip (+1 alert).`, 'warn');
+    sfxPhone();
   } else {
     showToast(`📞 ${playerName} pulled into: ${verb}`, 'warn');
   }
@@ -363,6 +467,13 @@ function updateHud() {
   }
   bandwidthEl.textContent = `⚡ ${state.bandwidth}`;
   playerCount.textContent = `${state.players.length}p`;
+
+  // Mobile action buttons visibility (BUILD only for NetEng during play; BAIL when frozen)
+  if (me) {
+    btnBuild.style.display = (me.role === 'NetEng' && state.gameState === 'playing') ? '' : 'none';
+    btnBuild.classList.toggle('active', buildMode);
+    btnBail.style.display = me.frozenUntil ? '' : 'none';
+  }
 
   const inLobby = state.gameState === 'lobby';
 
@@ -507,9 +618,12 @@ function updateSpacePrompt() {
     spacePromptEl.textContent = `${kind ? kind + '  ' : ''}Press SPACE → ${completable.verb}`;
     spacePromptEl.classList.add('active');
     spacePromptEl.classList.toggle('threat', completable.kind === 'threat');
+    btnAct.classList.add('hot');
+    btnAct.classList.toggle('threat', completable.kind === 'threat');
   } else {
     spacePromptEl.classList.remove('active', 'threat');
     spacePromptEl.textContent = '';
+    btnAct.classList.remove('hot', 'threat');
   }
 }
 
@@ -536,6 +650,7 @@ function exitBuildMode() {
   buildMode = false;
   canvas.style.cursor = '';
   updateBuildPrompt();
+  btnBuild.classList.remove('active');
 }
 
 function toggleBuildMode() {
@@ -565,6 +680,7 @@ function toggleBuildMode() {
   buildMode = true;
   canvas.style.cursor = 'crosshair';
   updateBuildPrompt();
+  btnBuild.classList.add('active');
 }
 
 // ---- Toast ----

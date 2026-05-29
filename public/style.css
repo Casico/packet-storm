@@ -412,6 +412,85 @@ html, body {
   transition: width 0.05s linear;
 }
 
+/* Mobile/touch action buttons (mirror SPACE / B / F-hold) */
+#action-buttons {
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 20;
+  pointer-events: none;
+}
+.action-btn {
+  pointer-events: auto;
+  background: #161b22;
+  border: 2px solid #30363d;
+  color: #e6edf3;
+  padding: 14px 18px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  border-radius: 8px;
+  cursor: pointer;
+  min-width: 110px;
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transition: background 0.1s, border-color 0.1s, transform 0.1s;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+.action-btn .hint {
+  font-size: 0.6rem;
+  opacity: 0.55;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+}
+.action-btn:hover { background: #2d333b; }
+.action-btn:active { transform: scale(0.96); }
+.action-btn.hot {
+  border-color: #7ee787;
+  color: #7ee787;
+  box-shadow: 0 0 18px rgba(126, 231, 135, 0.35);
+}
+.action-btn.hot.threat {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+  box-shadow: 0 0 18px rgba(255, 107, 107, 0.45);
+  animation: prompt-throb 0.7s ease-in-out infinite;
+}
+.action-btn.active {
+  border-color: #ffd960;
+  color: #ffd960;
+  background: #2d2417;
+}
+.action-btn.bail {
+  border-color: #ff9c3f;
+  color: #ff9c3f;
+}
+.action-btn.bail:active {
+  background: #ff9c3f33;
+}
+
+/* On small screens, make the buttons even bigger + reposition slightly */
+@media (max-width: 720px) {
+  #action-buttons {
+    bottom: 56px;
+    right: 12px;
+    gap: 8px;
+  }
+  .action-btn {
+    padding: 16px 14px;
+    min-width: 96px;
+  }
+}
+
 /* Toast */
 #toast {
   position: absolute;
