@@ -206,8 +206,14 @@ socket.on('task-completed', ({ holderId, completedByName }) => {
   if (holderId === myId) showToast(`✓ DONE BY ${completedByName}`, 'success');
 });
 
-socket.on('threat-resolved', ({ name, nodeLabel, byName }) => {
-  showToast(`✓ ${name.toUpperCase()} resolved by ${byName}`, 'success');
+socket.on('threat-resolved', ({ name, nodeLabel, byName, multi }) => {
+  const prefix = multi ? '✓✓ MULTI-THREAT' : '✓';
+  showToast(`${prefix} ${name.toUpperCase()} resolved by ${byName}`, 'success');
+});
+
+socket.on('threat-step', ({ name, role, byName, remaining }) => {
+  const remStr = remaining.map((r) => ROLE_ABBR[r] || r).join(', ');
+  showToast(`✓ ${ROLE_ABBR[role] || role} step done by ${byName} — still need: ${remStr}`, 'warn');
 });
 
 socket.on('threat-expired', ({ name, nodeLabel }) => {
@@ -750,7 +756,7 @@ function render() {
       const remain = Math.max(0, th.expiresAt - now);
       const countdown = Math.ceil(remain / 1000);
 
-      // Stack vertically below
+      // Stack vertically below: countdown + name
       const yBase = p.y + NODE_RADIUS + 12 + idx * 30;
       ctx.fillStyle = remain < 10000 ? '#ff6b6b' : '#ff9c3f';
       ctx.font = 'bold 14px ui-monospace, monospace';
@@ -762,17 +768,29 @@ function render() {
       ctx.font = '11px -apple-system, sans-serif';
       ctx.fillText(th.name, p.x, yBase + 16);
 
-      // Role badge above node
-      const badgeY = p.y - NODE_RADIUS - 14 - idx * 18;
-      ctx.fillStyle = ROLE_COLORS[th.requiredRole] || '#fff';
-      ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(p.x - 18, badgeY - 9, 36, 18, 3);
-      else ctx.rect(p.x - 18, badgeY - 9, 36, 18);
-      ctx.fill();
-      ctx.fillStyle = '#0e1117';
-      ctx.font = 'bold 11px -apple-system, sans-serif';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(ROLE_ABBR[th.requiredRole] || '?', p.x, badgeY);
+      // Role badges above node — one per required step; completed steps faded
+      const steps = th.steps || [{ role: th.requiredRole, completed: false }];
+      const badgeW = 36, badgeH = 18, badgeGap = 4;
+      const totalW = steps.length * badgeW + (steps.length - 1) * badgeGap;
+      const badgeY = p.y - NODE_RADIUS - 14 - idx * 22;
+      const startX = p.x - totalW / 2 + badgeW / 2;
+      steps.forEach((step, si) => {
+        const bx = startX + si * (badgeW + badgeGap);
+        const color = ROLE_COLORS[step.role] || '#fff';
+        ctx.fillStyle = step.completed ? `${color}55` : color; // 33% alpha for done
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(bx - badgeW/2, badgeY - badgeH/2, badgeW, badgeH, 3);
+        else ctx.rect(bx - badgeW/2, badgeY - badgeH/2, badgeW, badgeH);
+        ctx.fill();
+        ctx.fillStyle = step.completed ? '#0e111788' : '#0e1117';
+        ctx.font = 'bold 11px -apple-system, sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(
+          (step.completed ? '✓' : ROLE_ABBR[step.role] || '?'),
+          bx,
+          badgeY
+        );
+      });
     });
   }
 

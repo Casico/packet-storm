@@ -13,6 +13,8 @@ const BANDWIDTH_PER_TASK = 1;
 const THREAT_FIRE_MS = 22000;
 const THREAT_WARMUP_MS = 15000;
 const BANDWIDTH_PER_THREAT = 2;
+const BANDWIDTH_PER_MULTI_THREAT = 4;
+const MULTI_THREAT_UNLOCK_MS = 3 * 60 * 1000; // multi-role threats only after 3 minutes in
 
 const SPAWN_INTERVAL_MS = 60000;
 const SHADOW_TIMEOUT_MS = 45000;
@@ -199,21 +201,47 @@ const TASK_TEMPLATES = [
 ];
 
 // ---- Threat templates ----
+// Single-role threats: one player with the matching role must resolve them.
+// Multi-role threats: multiple roles must each reach the target node and press SPACE.
+// Multi-role threats are gated behind MULTI_THREAT_UNLOCK_MS so they appear later in the round.
 const THREAT_TEMPLATES = [
-  { role: 'SecOps',   nodeTypes: ['firewall'],          durationMs: 45000, name: () => `Port scan from ${randIp()}` },
-  { role: 'SecOps',   nodeTypes: ['host'],              durationMs: 40000, name: () => `Ransomware spreading` },
-  { role: 'SecOps',   nodeTypes: ['switch'],            durationMs: 35000, name: () => `MAC flood attack` },
-  { role: 'SecOps',   nodeTypes: ['firewall'],          durationMs: 35000, name: () => `Brute force on TCP ${randPort()}` },
+  // SecOps
+  { roles: ['SecOps'],   nodeTypes: ['firewall'],          durationMs: 45000, name: () => `Port scan from ${randIp()}` },
+  { roles: ['SecOps'],   nodeTypes: ['firewall'],          durationMs: 40000, name: () => `DDoS attack — ${randInt(50,500)} Gbps` },
+  { roles: ['SecOps'],   nodeTypes: ['host'],              durationMs: 40000, name: () => `Ransomware spreading` },
+  { roles: ['SecOps'],   nodeTypes: ['host'],              durationMs: 45000, name: () => `Phishing payload detonated` },
+  { roles: ['SecOps'],   nodeTypes: ['switch'],            durationMs: 35000, name: () => `MAC flood attack` },
+  { roles: ['SecOps'],   nodeTypes: ['switch'],            durationMs: 40000, name: () => `Lateral movement detected` },
+  { roles: ['SecOps'],   nodeTypes: ['firewall'],          durationMs: 35000, name: () => `Brute force on TCP ${randPort()}` },
 
-  { role: 'SysAdmin', nodeTypes: ['host'],              durationMs: 40000, name: () => `Zero-day RCE: ${randCve()}` },
-  { role: 'SysAdmin', nodeTypes: ['host'],              durationMs: 50000, name: () => `Disk at 98%, IO blocked` },
-  { role: 'SysAdmin', nodeTypes: ['host'],              durationMs: 35000, name: () => `Service crashed: ${randSvc()}` },
+  // SysAdmin
+  { roles: ['SysAdmin'], nodeTypes: ['host'],              durationMs: 40000, name: () => `Zero-day RCE: ${randCve()}` },
+  { roles: ['SysAdmin'], nodeTypes: ['host'],              durationMs: 50000, name: () => `Disk at 98%, IO blocked` },
+  { roles: ['SysAdmin'], nodeTypes: ['host'],              durationMs: 35000, name: () => `Service crashed: ${randSvc()}` },
+  { roles: ['SysAdmin'], nodeTypes: ['host'],              durationMs: 40000, name: () => `CPU pegged at 100%` },
+  { roles: ['SysAdmin'], nodeTypes: ['host'],              durationMs: 45000, name: () => `Memory leak — OOM imminent` },
+  { roles: ['SysAdmin'], nodeTypes: ['host'],              durationMs: 50000, name: () => `SSL cert expires in 1h` },
 
-  { role: 'NetEng',   nodeTypes: ['switch','firewall'], durationMs: 40000, name: () => `BGP flap on AS${randInt(100,9999)}` },
-  { role: 'NetEng',   nodeTypes: ['switch'],            durationMs: 30000, name: () => `Spanning tree storm` },
-  { role: 'NetEng',   nodeTypes: ['switch'],            durationMs: 35000, name: () => `MTU mismatch on uplink` },
+  // NetEng
+  { roles: ['NetEng'],   nodeTypes: ['switch','firewall'], durationMs: 40000, name: () => `BGP flap on AS${randInt(100,9999)}` },
+  { roles: ['NetEng'],   nodeTypes: ['switch'],            durationMs: 30000, name: () => `Spanning tree storm` },
+  { roles: ['NetEng'],   nodeTypes: ['switch'],            durationMs: 35000, name: () => `MTU mismatch on uplink` },
+  { roles: ['NetEng'],   nodeTypes: ['switch','firewall'], durationMs: 40000, name: () => `DNS resolution failing` },
+  { roles: ['NetEng'],   nodeTypes: ['switch'],            durationMs: 35000, name: () => `Routing loop forming` },
+  { roles: ['NetEng'],   nodeTypes: ['switch'],            durationMs: 40000, name: () => `DHCP scope exhausted` },
 
-  { role: 'NOC',      nodeTypes: ['firewall','switch','host'], durationMs: 50000, name: () => `Cryptic alert — run pcap` },
+  // NOC
+  { roles: ['NOC'],      nodeTypes: ['firewall','switch','host'], durationMs: 50000, name: () => `Cryptic alert — run pcap` },
+  { roles: ['NOC'],      nodeTypes: ['firewall','switch','host'], durationMs: 45000, name: () => `Sev-1 page — needs triage` },
+  { roles: ['NOC'],      nodeTypes: ['host'],                     durationMs: 50000, name: () => `Customer complaint ticket` },
+  { roles: ['NOC'],      nodeTypes: ['firewall','switch','host'], durationMs: 55000, name: () => `Compliance audit due` },
+
+  // ---- Multi-role threats (require multiple roles at the same node) ----
+  { roles: ['SecOps', 'SysAdmin'], nodeTypes: ['host'],     durationMs: 60000, multi: true, name: () => `Ransomware breach — quarantine + patch` },
+  { roles: ['NetEng', 'SecOps'],   nodeTypes: ['firewall'], durationMs: 60000, multi: true, name: () => `Firewall compromised — reconfig + reset` },
+  { roles: ['SysAdmin', 'NOC'],    nodeTypes: ['host'],     durationMs: 60000, multi: true, name: () => `Prod DB failure — restore + ack` },
+  { roles: ['NetEng', 'NOC'],      nodeTypes: ['switch'],   durationMs: 60000, multi: true, name: () => `Network partition — reroute + declare` },
+  { roles: ['SecOps', 'NOC'],      nodeTypes: ['firewall'], durationMs: 60000, multi: true, name: () => `Insider threat — kill session + investigate` },
 ];
 
 // ---- Rooms ----
@@ -323,27 +351,44 @@ function fireThreat(io, code) {
   const room = rooms.get(code);
   if (!room || room.gameState !== 'playing' || room.players.size === 0) return;
   const rolesPresent = new Set(Array.from(room.players.values()).map((p) => p.role));
-  const executable = THREAT_TEMPLATES.filter((t) => rolesPresent.has(t.role));
+
+  // Time gate: multi-role threats only after MULTI_THREAT_UNLOCK_MS elapsed
+  const elapsed = Date.now() - (room.gameStartedAt || Date.now());
+  const multiAllowed = elapsed >= MULTI_THREAT_UNLOCK_MS;
+
+  const executable = THREAT_TEMPLATES.filter((t) => {
+    if (t.multi && !multiAllowed) return false;
+    // Every role in the threat must be present in the room
+    return t.roles.every((r) => rolesPresent.has(r));
+  });
   if (executable.length === 0) return;
+
   const template = choice(executable);
   const candidateNodes = room.topology.nodes.filter(
     (n) => template.nodeTypes.includes(n.type) && !n.isSpawn
   );
   if (candidateNodes.length === 0) return;
   const node = choice(candidateNodes);
+
   const now = Date.now();
   const threat = {
     id: `th${room.threatSeq++}`,
-    requiredRole: template.role,
+    name: template.name(),
     requiredNode: node.id,
     nodeLabel: node.label,
-    name: template.name(),
+    multi: !!template.multi,
     createdAt: now,
     expiresAt: now + template.durationMs,
+    steps: template.roles.map((role) => ({
+      role,
+      node: node.id,           // all current multi-role steps target the same node
+      completed: false,
+      completedByName: null,
+    })),
   };
   room.threats.set(threat.id, threat);
   threat._timer = setTimeout(() => expireThreat(io, code, threat.id), template.durationMs);
-  console.log(`[${code}] THREAT fire: ${threat.name} @ ${node.id} (need ${threat.requiredRole}, ${template.durationMs/1000}s)`);
+  console.log(`[${code}] THREAT fire: ${threat.name} @ ${node.id} (need [${template.roles.join(', ')}], ${template.durationMs/1000}s${threat.multi ? ', MULTI' : ''})`);
   emitState(io, code);
 }
 
@@ -496,6 +541,7 @@ function startGame(io, code) {
   const room = rooms.get(code);
   if (!room) return;
   room.gameState = 'playing';
+  room.gameStartedAt = Date.now();
   room.roundEndsAt = Date.now() + ROUND_DURATION_MS + THREAT_WARMUP_MS;
 
   setTimeout(() => {
@@ -575,8 +621,16 @@ function publicSnapshot(room) {
       arr.map((t) => ({ edge, playerId: t.playerId, startedAt: t.startedAt }))
     ),
     threats: Array.from(room.threats.values()).map((t) => ({
-      id: t.id, requiredRole: t.requiredRole, requiredNode: t.requiredNode,
-      nodeLabel: t.nodeLabel, name: t.name, expiresAt: t.expiresAt,
+      id: t.id,
+      name: t.name,
+      requiredNode: t.requiredNode,
+      nodeLabel: t.nodeLabel,
+      multi: !!t.multi,
+      expiresAt: t.expiresAt,
+      steps: t.steps.map((s) => ({
+        role: s.role, node: s.node,
+        completed: s.completed, completedByName: s.completedByName,
+      })),
     })),
   };
 }
@@ -599,11 +653,12 @@ function emitState(io, code) {
 
     let completable = null;
     if (!player.traversing && room.gameState === 'playing') {
+      // Threats take priority — match any incomplete step at this node for this role
       for (const th of room.threats.values()) {
-        if (th.requiredRole === player.role && th.requiredNode === player.node) {
-          completable = { verb: th.name, kind: 'threat' };
-          break;
-        }
+        const step = th.steps.find(
+          (s) => !s.completed && s.role === player.role && s.node === player.node
+        );
+        if (step) { completable = { verb: th.name, kind: 'threat' }; break; }
       }
       if (!completable) {
         for (const t of room.tasks.values()) {
@@ -747,19 +802,39 @@ io.on('connection', (socket) => {
     const player = room.players.get(socket.id);
     if (!player || player.traversing) return;
 
-    let threat = null;
+    // Find an incomplete step in any threat that matches this player's role + node
+    let matchedThreat = null;
+    let matchedStep = null;
     for (const t of room.threats.values()) {
-      if (t.requiredRole === player.role && t.requiredNode === player.node) { threat = t; break; }
+      const s = t.steps.find(
+        (st) => !st.completed && st.role === player.role && st.node === player.node
+      );
+      if (s) { matchedThreat = t; matchedStep = s; break; }
     }
-    if (threat) {
-      if (threat._timer) clearTimeout(threat._timer);
-      room.threats.delete(threat.id);
-      room.bandwidth += BANDWIDTH_PER_THREAT;
-      room.stats.threatsResolved++;
-      console.log(`[${currentRoom}] threat resolved: ${threat.name} by ${player.name}`);
-      io.to(currentRoom).emit('threat-resolved', {
-        name: threat.name, nodeLabel: threat.nodeLabel, byName: player.name,
-      });
+    if (matchedThreat) {
+      matchedStep.completed = true;
+      matchedStep.completedByName = player.name;
+      // If all steps are done, the threat is fully resolved
+      const allDone = matchedThreat.steps.every((s) => s.completed);
+      if (allDone) {
+        if (matchedThreat._timer) clearTimeout(matchedThreat._timer);
+        room.threats.delete(matchedThreat.id);
+        room.bandwidth += matchedThreat.multi ? BANDWIDTH_PER_MULTI_THREAT : BANDWIDTH_PER_THREAT;
+        room.stats.threatsResolved++;
+        console.log(`[${currentRoom}] threat resolved: ${matchedThreat.name} by ${player.name}`);
+        io.to(currentRoom).emit('threat-resolved', {
+          name: matchedThreat.name, nodeLabel: matchedThreat.nodeLabel,
+          byName: player.name, multi: matchedThreat.multi,
+        });
+      } else {
+        // Partial progress on a multi-role threat — notify everyone
+        console.log(`[${currentRoom}] threat partial: ${matchedThreat.name} step ${player.role} by ${player.name}`);
+        io.to(currentRoom).emit('threat-step', {
+          threatId: matchedThreat.id, name: matchedThreat.name,
+          role: player.role, byName: player.name,
+          remaining: matchedThreat.steps.filter((s) => !s.completed).map((s) => s.role),
+        });
+      }
       emitState(io, currentRoom);
       return;
     }
