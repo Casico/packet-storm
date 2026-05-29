@@ -25,6 +25,7 @@ const overlayEl = document.getElementById('overlay');
 const overlayTitleEl = document.getElementById('overlay-title');
 const overlayReasonEl = document.getElementById('overlay-reason');
 const overlayStatsEl = document.getElementById('overlay-stats');
+const overlayActionEl = document.getElementById('overlay-action');
 const lobbyCardEl = document.getElementById('lobby-card');
 const lobbyRoomCodeEl = document.getElementById('lobby-room-code');
 const lobbyRosterEl = document.getElementById('lobby-roster');
@@ -147,6 +148,13 @@ function onJoined(resp) {
 socket.on('state', (s) => {
   state = s;
   updateHud();
+  // Hide game-over overlay if the room has reset back to lobby/playing
+  if (s.gameState === 'lobby' || s.gameState === 'playing') {
+    overlayEl.className = '';
+  } else if (overlayEl.classList.contains('show')) {
+    // Re-render the action in case host changed (or initial render)
+    renderOverlayAction();
+  }
 });
 
 socket.on('private', (payload) => {
@@ -200,7 +208,37 @@ socket.on('game-over', ({ kind, reason, stats }) => {
     Threats resolved: <strong>${stats.threatsResolved}</strong><br>
     Threats expired: <strong>${stats.threatsExpired}</strong>
   `;
+  renderOverlayAction();
 });
+
+socket.on('game-restarted', () => {
+  // Server already emits 'state' with gameState='lobby' which hides the overlay;
+  // also reset client-side build-mode if it was sticky.
+  if (buildMode) exitBuildMode();
+});
+
+function renderOverlayAction() {
+  overlayActionEl.innerHTML = '';
+  if (!state) return;
+  const isHost = myId === state.hostId;
+  if (isHost) {
+    const btn = document.createElement('button');
+    btn.id = 'play-again-btn';
+    btn.textContent = 'PLAY AGAIN';
+    btn.onclick = () => socket.emit('restart-game');
+    overlayActionEl.appendChild(btn);
+    const hint = document.createElement('p');
+    hint.className = 'overlay-hint';
+    hint.textContent = 'New random map, same crew';
+    overlayActionEl.appendChild(hint);
+  } else {
+    const host = state.players.find((p) => p.id === state.hostId);
+    const wait = document.createElement('p');
+    wait.className = 'overlay-hint';
+    wait.textContent = `Waiting for ${host ? host.name : 'host'} to start a new round…`;
+    overlayActionEl.appendChild(wait);
+  }
+}
 
 socket.on('blocked', () => { blockedFlashUntil = performance.now() + 250; });
 socket.on('disconnect', () => { lobbyMsg.textContent = 'Disconnected. Refresh to reconnect.'; });

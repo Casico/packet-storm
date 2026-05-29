@@ -436,6 +436,42 @@ function startSpawnLoop(io, code) {
   room.spawnInterval = setInterval(() => fireSpawn(io, code), SPAWN_INTERVAL_MS);
 }
 
+// ---- Restart (host-triggered after game-over) ----
+function restartGame(io, code) {
+  const room = rooms.get(code);
+  if (!room) return;
+  clearTimers(room);
+
+  const gen = generateTopology();
+  console.log(`[${code}] RESTART — new topology: ${gen.nodes.length} nodes, ${gen.edges.length} edges, critical=${gen.criticalNodeId}`);
+
+  room.topology = { nodes: gen.nodes, edges: gen.edges };
+  room.criticalNode = gen.criticalNodeId;
+  room.traversals = new Map();
+  room.tasks = new Map();
+  room.taskHolders = new Map();
+  room.pendingTasks = [];
+  room.threats = new Map();
+  room.alertQueue = 0;
+  room.bandwidth = STARTING_BANDWIDTH;
+  room.taskSeq = 1;
+  room.threatSeq = 1;
+  room.spawnSeq = 1;
+  room.gameState = 'lobby';
+  room.roundEndsAt = null;
+  room.stats = { tasksCompleted: 0, threatsResolved: 0, threatsExpired: 0, nodesConnected: 0, nodesShadowed: 0 };
+
+  // Re-randomize each player onto a node from the new map; old node IDs may not exist
+  const startCandidates = room.topology.nodes.filter((n) => !n.isSpawn).map((n) => n.id);
+  for (const player of room.players.values()) {
+    player.node = startCandidates[Math.floor(Math.random() * startCandidates.length)];
+    player.traversing = null;
+  }
+
+  io.to(code).emit('game-restarted');
+  emitState(io, code);
+}
+
 // ---- Game state ----
 function startGame(io, code) {
   const room = rooms.get(code);
@@ -635,6 +671,15 @@ io.on('connection', (socket) => {
     if (room.hostId !== socket.id) return;
     if (room.gameState !== 'lobby') return;
     startGame(io, currentRoom);
+  });
+
+  socket.on('restart-game', () => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    if (room.hostId !== socket.id) return;
+    if (room.gameState !== 'won' && room.gameState !== 'lost') return;
+    restartGame(io, currentRoom);
   });
 
   socket.on('join-room', ({ code, name } = {}, cb) => {

@@ -327,7 +327,29 @@ html, body {
   opacity: 0.5;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  margin-top: 10px;
 }
+
+#overlay-action { margin-top: 8px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+
+#play-again-btn {
+  background: #58a6ff;
+  color: #0e1117;
+  border: none;
+  padding: 14px 32px;
+  font-size: 1.1rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.1s;
+  font-family: inherit;
+}
+#play-again-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(88, 166, 255, 0.4);
+}
+#play-again-btn:active { transform: translateY(0); }
 
 /* Lobby (pre-start) card */
 #lobby-card {
