@@ -20,6 +20,32 @@ const rolePanelBodyEl = document.getElementById('role-panel-body');
 const defconBadgeEl = document.getElementById('defcon-badge');
 const taskCountsEl = document.getElementById('task-counts');
 const freezeBannerEl = document.getElementById('freeze-banner');
+const muteBtnEl = document.getElementById('mute-btn');
+
+// Background music — created lazily on first user gesture (browser autoplay rules)
+let bgmEl = null;
+let bgmMuted = localStorage.getItem('ps-muted') === '1';
+function ensureBgm() {
+  if (bgmEl) return bgmEl;
+  bgmEl = new Audio('/assets/audio/loop-main.mp3');
+  bgmEl.loop = true;
+  bgmEl.volume = 0.22;
+  return bgmEl;
+}
+function setMuted(muted) {
+  bgmMuted = muted;
+  localStorage.setItem('ps-muted', muted ? '1' : '0');
+  if (bgmEl) bgmEl.muted = muted;
+  muteBtnEl.textContent = muted ? '🔇' : '🔊';
+  muteBtnEl.classList.toggle('muted', muted);
+}
+function startBgm() {
+  const el = ensureBgm();
+  el.muted = bgmMuted;
+  el.play().catch(() => {/* ignored if blocked */});
+}
+muteBtnEl.addEventListener('click', () => setMuted(!bgmMuted));
+setMuted(bgmMuted); // sync icon at load
 const taskPanelEl = document.getElementById('task-panel');
 const taskRoleEl = document.getElementById('task-role');
 const taskVerbEl = document.getElementById('task-verb');
@@ -188,6 +214,8 @@ function onJoined(resp) {
   try { history.replaceState({}, '', buildInviteUrl(roomCode)); } catch (_) {}
   resizeCanvas();
   requestAnimationFrame(render);
+  // Start music — the create/join button click counts as the user gesture
+  startBgm();
 }
 
 // ---- Socket events ----

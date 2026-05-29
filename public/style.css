@@ -130,6 +130,20 @@ html, body {
   opacity: 0.9;
 }
 #hud-right { display: inline-flex; gap: 18px; align-items: center; font-size: 1.1rem; }
+#mute-btn {
+  background: transparent;
+  border: 1px solid #30363d;
+  color: inherit;
+  font-size: 1.1rem;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  pointer-events: auto;
+  font-family: inherit;
+  line-height: 1;
+}
+#mute-btn:hover { background: #1c2128; }
+#mute-btn.muted { opacity: 0.5; }
 #bandwidth { font-weight: 700; color: #ffd960; letter-spacing: 0.1em; }
 #round-timer { font-family: ui-monospace, monospace; font-weight: 700; letter-spacing: 0.05em; font-size: 1.2rem; }
 #round-timer.warn { color: #ff9c3f; }
