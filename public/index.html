@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Packet Storm</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="lobby">
+    <h1>PACKET STORM</h1>
+    <p class="tagline">Real-time co-op network defense. Voice chat required.</p>
+    <input id="name" placeholder="Your name" maxlength="16" autocomplete="off" />
+    <div class="row">
+      <button id="create-btn">Create Room</button>
+      <span class="sep">or</span>
+      <input id="room-code" placeholder="ROOM" maxlength="4" autocomplete="off" />
+      <button id="join-btn">Join</button>
+    </div>
+    <p id="lobby-msg"></p>
+    <p class="footnote">v0.7 prototype — full link-building. B → build mode, click target.</p>
+  </div>
+
+  <div id="game" class="hidden">
+    <div id="hud">
+      <span id="room-label"></span>
+      <span id="my-role"></span>
+      <span id="hud-right">
+        <span id="round-timer"></span>
+        <span id="alert-queue"></span>
+        <span id="bandwidth"></span>
+        <span id="player-count"></span>
+      </span>
+    </div>
+    <div id="roster"></div>
+    <canvas id="canvas"></canvas>
+
+    <div id="task-panel">
+      <div class="task-header">INCOMING ALERT</div>
+      <div class="task-body">
+        <span id="task-role"></span>
+        <div id="task-verb">Waiting for alert…</div>
+        <div id="task-node"></div>
+      </div>
+      <div class="task-footer">Yell it out</div>
+    </div>
+
+    <div id="space-prompt"></div>
+    <div id="build-prompt"></div>
+    <div id="toast"></div>
+
+    <div id="lobby-card">
+      <div class="lobby-card-inner">
+        <div class="lobby-eyebrow">ROOM <span id="lobby-room-code"></span></div>
+        <h2>Waiting to start</h2>
+        <p class="lobby-hint">Share the link so your team can join. Move your token around to get oriented.</p>
+        <button id="copy-link-btn">📋 Copy invite link</button>
+        <div id="lobby-roster"></div>
+        <div id="lobby-action"></div>
+      </div>
+    </div>
+
+    <div id="overlay">
+      <div class="overlay-card">
+        <h2 id="overlay-title"></h2>
+        <p id="overlay-reason"></p>
+        <div id="overlay-stats"></div>
+        <p class="overlay-hint">Refresh to play again</p>
+      </div>
+    </div>
+
+    <div id="help">Arrow keys to move • SPACE to act on a task/threat • B (NetEng) to enter build mode, then click a target</div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
